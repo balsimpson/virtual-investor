@@ -11,9 +11,10 @@
 4. Start a new conversation if the installed Hermes version caches skill
    discovery, then type `/harper` in Desktop, CLI/TUI, or a configured gateway.
 5. Confirm first use asks only for a preferred name, then market/reporting
-   currency, then confirmation of an IANA user timezone. Harper must then test
-   live web search and source extraction; this capability check is an action,
-   not another user questionnaire.
+   currency, then starting cash with a currency-aware suggested default, then
+   confirmation of an IANA user timezone. The user must confirm or replace the
+   cash suggestion. Harper must then test live web search and source extraction;
+   this capability check is an action, not another user questionnaire.
 6. Create scheduled jobs only after research access is verified, the user opts
    in, and each prompt's Cron Config table is reviewed.
 
@@ -42,7 +43,8 @@ python3 scripts/portfolio.py profile show
 Existing India-only ledgers are migrated with the engine's existing
 India/NSE-BSE and INR invariants. Their preferred name remains unset unless it
 was already stored in Harper's canonical profile. The migration does not touch
-holdings, trades, cash, research, schedules, or global personality settings.
+holdings, trades, cash, research, schedules, or global personality settings;
+their recorded initial cash is adopted as the confirmed starting amount.
 
 New markets create a local discovery adapter during onboarding. Missing
 benchmark, market-specific cost, preferred-source, or regulatory data does not
@@ -75,8 +77,9 @@ Never delete a database to simulate a reset.
 
 ## Optional services
 
-- Dashboard sync is disabled until `CONVEX_URL` is configured. Read
-  `references/dashboard-operations.md` before enabling it.
+- Dashboard sync is disabled until `CONVEX_URL`, `HARPER_SYNC_URL`, and
+  `HARPER_SYNC_TOKEN` are configured. Read `references/dashboard-operations.md`
+  before deploying the separate companion or enabling its authenticated sync.
 - Failed-run recovery discovers jobs named `virtual-investor` or beginning
   with `virtual-investor-`. Set `HARPER_JOB_IDS` to a comma-separated list only
   when using different names.

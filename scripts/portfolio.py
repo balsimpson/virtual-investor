@@ -27,12 +27,34 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-INITIAL_CASH = 100_000.0
+LEGACY_INITIAL_CASH = 100_000.0
+SUGGESTED_INITIAL_CASH_BY_CURRENCY = {
+    "AUD": 10_000.0,
+    "BRL": 100_000.0,
+    "CAD": 10_000.0,
+    "CHF": 10_000.0,
+    "CNY": 100_000.0,
+    "EUR": 10_000.0,
+    "GBP": 10_000.0,
+    "HKD": 100_000.0,
+    "IDR": 100_000_000.0,
+    "INR": 100_000.0,
+    "JPY": 1_000_000.0,
+    "KRW": 10_000_000.0,
+    "MXN": 100_000.0,
+    "NZD": 10_000.0,
+    "SGD": 10_000.0,
+    "THB": 100_000.0,
+    "TWD": 100_000.0,
+    "USD": 10_000.0,
+    "VND": 100_000_000.0,
+    "ZAR": 100_000.0,
+}
 BENCHMARK_TICKER = "NIFTY50-TRI"
 MAX_POSITION_WEIGHT = 0.20
 MIN_HOLD_DAYS = 0
-SCHEMA_VERSION = 17
-ONBOARDING_VERSION = 3
+SCHEMA_VERSION = 18
+ONBOARDING_VERSION = 4
 SUPPORTED_MARKET = "INDIA_NSE_BSE"
 SUPPORTED_CURRENCY = "INR"
 INDIA_TZ = timezone(timedelta(hours=5, minutes=30))
@@ -87,6 +109,7 @@ CANDIDATE_OUTCOME_HORIZONS = (5, 10, 20)
 SCORING_MODEL_VERSION = "2.0-shadow"
 DECISION_MODEL_VERSION = "3.0-multi-thesis-shadow"
 OPERATING_SCHEDULE_VERSION = "2026.1"
+DASHBOARD_CONTRACT_VERSION = 1
 OPERATING_SESSIONS = (
     {"label": "preparation", "time": "08:55", "purpose": "Research, risk and market-session preparation; no trade."},
     {"label": "open-pulse", "time": "09:15", "purpose": "Market-open reconnaissance; no trade."},
@@ -268,6 +291,25 @@ def _money(conn: sqlite3.Connection, value: float) -> str:
     return f"{symbol}{value:,.2f}" if symbol else f"{code} {value:,.2f}"
 
 
+def _suggested_initial_cash(currency: str | None) -> float:
+    return SUGGESTED_INITIAL_CASH_BY_CURRENCY.get(
+        str(currency or "").upper(), 10_000.0
+    )
+
+
+def _chosen_initial_cash(conn: sqlite3.Connection) -> float:
+    row = conn.execute(
+        "SELECT initial_cash, base_currency FROM investor_profile WHERE id = 1"
+    ).fetchone()
+    if row and row["initial_cash"] is not None:
+        return float(row["initial_cash"])
+    return state_float(
+        conn,
+        "initial_cash",
+        _suggested_initial_cash(row["base_currency"] if row else None),
+    )
+
+
 def _effective_cost_bps(conn: sqlite3.Connection, key: str) -> float:
     adapter = _get_adapter(conn)
     model = adapter.get("cost_model", {}) if adapter else {}
@@ -392,6 +434,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     upgrading_existing_portfolio = bool(
         {"state", "holdings", "trades"}.intersection(existing_tables)
     )
+    previous_schema_version = 0
+    if "state" in existing_tables:
+        previous_version_row = conn.execute(
+            "SELECT value FROM state WHERE key = 'schema_version'"
+        ).fetchone()
+        try:
+            previous_schema_version = int(previous_version_row["value"])
+        except (TypeError, ValueError):
+            previous_schema_version = 0
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS state (
@@ -743,11 +794,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             preferred_name TEXT,
             market TEXT,
             base_currency TEXT,
+            initial_cash REAL CHECK(initial_cash > 0),
             user_timezone TEXT,
             research_access TEXT NOT NULL DEFAULT 'NOT_CHECKED'
                 CHECK(research_access IN ('NOT_CHECKED', 'FULL', 'LIMITED', 'UNAVAILABLE')),
             research_checked_at TEXT,
             automation_preference TEXT NOT NULL DEFAULT 'NOT_ASKED',
+            dashboard_preference TEXT NOT NULL DEFAULT 'NOT_ASKED'
+                CHECK(dashboard_preference IN ('NOT_ASKED', 'ENABLED', 'SKIPPED')),
             onboarding_version INTEGER NOT NULL DEFAULT 1,
             onboarding_completed_at TEXT,
             optional_preferences_json TEXT NOT NULL DEFAULT '{}',
@@ -776,9 +830,16 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     profile_cols = columns(conn, "investor_profile")
     if "user_timezone" not in profile_cols:
         conn.execute("ALTER TABLE investor_profile ADD COLUMN user_timezone TEXT")
+    if "initial_cash" not in profile_cols:
+        conn.execute("ALTER TABLE investor_profile ADD COLUMN initial_cash REAL")
     if "automation_preference" not in profile_cols:
         conn.execute(
             "ALTER TABLE investor_profile ADD COLUMN automation_preference "
+            "TEXT NOT NULL DEFAULT 'NOT_ASKED'"
+        )
+    if "dashboard_preference" not in profile_cols:
+        conn.execute(
+            "ALTER TABLE investor_profile ADD COLUMN dashboard_preference "
             "TEXT NOT NULL DEFAULT 'NOT_ASKED'"
         )
     if "research_access" not in profile_cols:
@@ -930,12 +991,22 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE decision_journal ADD COLUMN run_id INTEGER")
     conn.execute(
         "INSERT OR IGNORE INTO state(key, value) VALUES ('cash', ?)",
-        (str(INITIAL_CASH),),
+        (str(LEGACY_INITIAL_CASH),),
     )
     conn.execute(
         "INSERT OR IGNORE INTO state(key, value) VALUES ('initial_cash', ?)",
-        (str(INITIAL_CASH),),
+        (str(LEGACY_INITIAL_CASH),),
     )
+    if upgrading_existing_portfolio and previous_schema_version < 18:
+        existing_initial_cash = state_float(
+            conn, "initial_cash", state_float(conn, "cash", LEGACY_INITIAL_CASH)
+        )
+        conn.execute(
+            """UPDATE investor_profile
+               SET initial_cash = COALESCE(initial_cash, ?), onboarding_version = ?
+               WHERE id = 1""",
+            (existing_initial_cash, ONBOARDING_VERSION),
+        )
     conn.execute("INSERT OR IGNORE INTO state(key, value) VALUES ('realized_pnl', '0')")
     conn.execute("INSERT OR IGNORE INTO state(key, value) VALUES ('gross_realized_pnl', '0')")
     conn.execute("INSERT OR IGNORE INTO state(key, value) VALUES ('trading_costs', '0')")
@@ -2045,7 +2116,11 @@ def cmd_init(_: argparse.Namespace) -> None:
         if not conn.execute("SELECT 1 FROM decision_journal LIMIT 1").fetchone():
             conn.execute(
                 "INSERT INTO decision_journal(entry_type, content, timestamp) VALUES (?, ?, ?)",
-                ("initial", f"Virtual portfolio launched with {INITIAL_CASH:,.2f} cash units.", now()),
+                (
+                    "initial",
+                    "Virtual portfolio initialized; starting cash is confirmed during onboarding.",
+                    now(),
+                ),
             )
     print(f"Database ready at {db_path()}")
 
@@ -2063,6 +2138,8 @@ def _profile_complete(row: sqlite3.Row | dict) -> bool:
         str(row["preferred_name"] or "").strip()
         and str(row["market"] or "").strip()
         and re.fullmatch(r"[A-Z]{3}", str(row["base_currency"] or ""))
+        and row["initial_cash"] is not None
+        and float(row["initial_cash"]) > 0
         and str(row["user_timezone"] or "").strip()
         and str(row["research_access"] or "") == "FULL"
         and int(row["onboarding_version"]) == ONBOARDING_VERSION
@@ -2070,7 +2147,7 @@ def _profile_complete(row: sqlite3.Row | dict) -> bool:
 
 
 def _portfolio_onboarding_context(conn: sqlite3.Connection) -> dict:
-    cash = round(state_float(conn, "cash", INITIAL_CASH), 2)
+    cash = round(state_float(conn, "cash", LEGACY_INITIAL_CASH), 2)
     holdings_count = int(conn.execute("SELECT COUNT(*) FROM holdings").fetchone()[0])
     context = {
         "cash": cash,
@@ -2106,12 +2183,21 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
         missing.append("market")
     if not re.fullmatch(r"[A-Z]{3}", str(row["base_currency"] or "")):
         missing.append("base_currency")
+    if row["initial_cash"] is None or float(row["initial_cash"]) <= 0:
+        missing.append("initial_cash")
     if not str(row["user_timezone"] or "").strip():
         missing.append("user_timezone")
     if str(row["research_access"] or "") != "FULL":
         missing.append("research_access")
     preferences = json.loads(row["optional_preferences_json"] or "{}")
     portfolio = _portfolio_onboarding_context(conn)
+    if row["initial_cash"] is None:
+        portfolio.update({
+            "cash": None,
+            "nav": None,
+            "valuation_status": "PENDING_STARTING_CASH",
+            "valuation_note": "Starting cash has not been confirmed.",
+        })
     adapter = _get_adapter(conn, row["market"]) if row["market"] else None
 
     if "preferred_name" in missing:
@@ -2120,19 +2206,26 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
             "I'm Harper. I manage a virtual portfolio, explain my decisions, "
             "and never touch real money. What should I call you?"
         )
-    elif any(field in missing for field in ("market", "base_currency", "user_timezone")):
-        if "market" in missing or "base_currency" in missing:
-            stage = "NEEDS_MARKET_CURRENCY"
-            suggested_response = (
-                f"Good to meet you, {row['preferred_name']}. Which market should I operate in, "
-                "and which currency should I use for your reports?"
-            )
-        else:
-            stage = "NEEDS_TIMEZONE"
-            suggested_response = (
-                "Which timezone should I use for your reports? Use a city-based timezone "
-                "such as Asia/Kolkata or America/New_York."
-            )
+    elif "market" in missing or "base_currency" in missing:
+        stage = "NEEDS_MARKET_CURRENCY"
+        suggested_response = (
+            f"Good to meet you, {row['preferred_name']}. Which market should I operate in, "
+            "and which currency should I use for your reports?"
+        )
+    elif "initial_cash" in missing:
+        stage = "NEEDS_STARTING_CASH"
+        suggested = _suggested_initial_cash(row["base_currency"])
+        suggested_response = (
+            "How much virtual cash should I start with? A sensible default for "
+            f"{row['base_currency']} is {_money(conn, suggested)}. You can use that "
+            "or choose another positive amount."
+        )
+    elif "user_timezone" in missing:
+        stage = "NEEDS_TIMEZONE"
+        suggested_response = (
+            "Which timezone should I use for your reports? Use a city-based timezone "
+            "such as Asia/Kolkata or America/New_York."
+        )
     elif "research_access" in missing:
         stage = "NEEDS_RESEARCH_ACCESS"
         if row["research_access"] == "NOT_CHECKED":
@@ -2188,6 +2281,17 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
                 " Would you like me to prepare an automatic schedule around this market's "
                 "hours? I won't create or enable jobs without your confirmation."
             )
+        elif row["dashboard_preference"] == "NOT_ASKED":
+            next_action = (
+                " Would you like the optional private web dashboard? It uses your own "
+                "Vercel and Convex accounts, and I won't create cloud resources or sync "
+                "portfolio data without your confirmation."
+            )
+        elif row["dashboard_preference"] == "ENABLED":
+            next_action = (
+                " Your dashboard choice is saved. I can check its connection or explain "
+                "the first authenticated sync."
+            )
         else:
             next_action = (
                 " Want the quick market brief or the reasoning behind how I choose a trade?"
@@ -2207,10 +2311,12 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
             "market": row["market"],
             "market_label": adapter["display_name"] if adapter else row["market"],
             "base_currency": row["base_currency"],
+            "initial_cash": row["initial_cash"],
             "user_timezone": row["user_timezone"],
             "research_access": row["research_access"],
             "research_checked_at": row["research_checked_at"],
             "automation_preference": row["automation_preference"],
+            "dashboard_preference": row["dashboard_preference"],
             "onboarding_version": int(row["onboarding_version"]),
             "onboarding_completed_at": row["onboarding_completed_at"],
             "optional_preferences": preferences,
@@ -2222,7 +2328,17 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
         "automation_offer_pending": (
             complete and row["automation_preference"] == "NOT_ASKED"
         ),
+        "dashboard_offer_pending": (
+            complete
+            and row["automation_preference"] != "NOT_ASKED"
+            and row["dashboard_preference"] == "NOT_ASKED"
+        ),
         "research_check_required": row["research_access"] != "FULL",
+        "suggested_initial_cash": (
+            _suggested_initial_cash(row["base_currency"])
+            if row["base_currency"] and row["initial_cash"] is None
+            else None
+        ),
         "suggested_response": suggested_response,
     }
 
@@ -2236,7 +2352,8 @@ def cmd_profile_show(_: argparse.Namespace) -> None:
 def cmd_profile_set(args: argparse.Namespace) -> None:
     if all(value is None for value in (
         args.preferred_name, args.market, args.base_currency,
-        args.user_timezone, args.research_access, args.automation,
+        args.initial_cash, args.user_timezone, args.research_access,
+        args.automation, args.dashboard,
     )):
         raise ValueError("profile set requires at least one profile field")
     updates = {}
@@ -2249,6 +2366,13 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
         updates["market"] = _normalize_market(args.market)
     if args.base_currency is not None:
         updates["base_currency"] = _normalize_currency(args.base_currency)
+    if args.initial_cash is not None:
+        initial_cash = round(float(args.initial_cash), 2)
+        if not math.isfinite(initial_cash) or initial_cash <= 0:
+            raise ValueError("initial cash must be a positive finite amount")
+        if initial_cash > 1_000_000_000_000_000:
+            raise ValueError("initial cash must not exceed 1,000,000,000,000,000")
+        updates["initial_cash"] = initial_cash
     if args.user_timezone is not None:
         updates["user_timezone"] = _timezone_name(args.user_timezone)
     if args.research_access is not None:
@@ -2256,6 +2380,8 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
         updates["research_checked_at"] = now()
     if args.automation is not None:
         updates["automation_preference"] = args.automation
+    if args.dashboard is not None:
+        updates["dashboard_preference"] = args.dashboard
 
     with connect() as conn:
         current = conn.execute("SELECT * FROM investor_profile WHERE id = 1").fetchone()
@@ -2264,6 +2390,9 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
         effective_research_access = updates.get(
             "research_access", current["research_access"]
         )
+        effective_currency = updates.get("base_currency", current["base_currency"])
+        if args.initial_cash is not None and not effective_currency:
+            raise ValueError("set the reporting currency before initial cash")
         if args.automation == "ENABLED" and effective_research_access != "FULL":
             raise ValueError(
                 "automated sessions require verified FULL web search and source extraction"
@@ -2295,6 +2424,8 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
             int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
             for table in ("holdings", "trades", "snapshots")
         )
+        if args.initial_cash is not None and financial_history:
+            raise ValueError("initial cash cannot change after financial history exists")
         if changed_scope and financial_history:
             raise ValueError(
                 "market or reporting currency cannot change after financial history exists; "
@@ -2304,6 +2435,31 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
             raise ValueError(
                 "changing an established market or currency requires "
                 "--confirm-scope-change CHANGE-HARPER-SCOPE; historical values are not converted"
+            )
+        currency_changed = (
+            "base_currency" in updates
+            and current["base_currency"]
+            and current["base_currency"] != updates["base_currency"]
+        )
+        if currency_changed and args.initial_cash is None:
+            updates["initial_cash"] = None
+            suggested = _suggested_initial_cash(updates["base_currency"])
+            conn.execute(
+                "INSERT OR REPLACE INTO state(key, value) VALUES ('cash', ?)",
+                (str(suggested),),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO state(key, value) VALUES ('initial_cash', ?)",
+                (str(suggested),),
+            )
+        elif args.initial_cash is not None:
+            conn.execute(
+                "INSERT OR REPLACE INTO state(key, value) VALUES ('cash', ?)",
+                (str(updates["initial_cash"]),),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO state(key, value) VALUES ('initial_cash', ?)",
+                (str(updates["initial_cash"]),),
             )
         values = dict(current)
         values.update(updates)
@@ -2707,6 +2863,7 @@ def cmd_reset(args: argparse.Namespace) -> None:
         "source_scores", "state", "theses", "trades",
     )
     with connect() as conn:
+        reset_initial_cash = _chosen_initial_cash(conn)
         _ensure_archive_schema(conn)
         removed = {
             table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -2742,8 +2899,20 @@ def cmd_reset(args: argparse.Namespace) -> None:
             )
         ensure_schema(conn)
         conn.execute(
+            "INSERT OR REPLACE INTO state(key, value) VALUES ('cash', ?)",
+            (str(reset_initial_cash),),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO state(key, value) VALUES ('initial_cash', ?)",
+            (str(reset_initial_cash),),
+        )
+        conn.execute(
             "INSERT INTO decision_journal(entry_type, content, timestamp) VALUES (?, ?, ?)",
-            ("initial", f"Harper restarted with {_money(conn, INITIAL_CASH)} in virtual cash.", now()),
+            (
+                "initial",
+                f"Harper restarted with {_money(conn, reset_initial_cash)} in virtual cash.",
+                now(),
+            ),
         )
         conn.execute(
             "INSERT OR REPLACE INTO state(key, value) VALUES ('lifecycle_last_maintained_at', ?)",
@@ -2758,7 +2927,7 @@ def cmd_reset(args: argparse.Namespace) -> None:
         "removed_archive_rows": removed_archive_rows,
         "removed_archive_tombstones": removed_archive_tombstones,
         "preserved_feed_definitions": preserved_sources,
-        "cash": INITIAL_CASH,
+        "cash": reset_initial_cash,
     }, indent=2))
 
 
@@ -3047,7 +3216,7 @@ def cmd_trade(args: argparse.Namespace) -> None:
         fees = round(total * _effective_cost_bps(conn, "fee_bps") / 10_000, 2)
         slippage = round(abs(execution_price - source_price) * shares, 2)
 
-        cash = state_float(conn, "cash", INITIAL_CASH)
+        cash = state_float(conn, "cash", LEGACY_INITIAL_CASH)
         realized_total = state_float(conn, "realized_pnl", 0.0)
         gross_realized_total = state_float(conn, "gross_realized_pnl", 0.0)
         costs_total = state_float(conn, "trading_costs", 0.0)
@@ -3148,8 +3317,8 @@ def cmd_trade(args: argparse.Namespace) -> None:
 def portfolio_status(conn: sqlite3.Connection) -> dict:
     adapter = _get_adapter(conn) or {}
     adapter_health = _adapter_health(adapter) if adapter else None
-    cash = state_float(conn, "cash", INITIAL_CASH)
-    initial = state_float(conn, "initial_cash", INITIAL_CASH)
+    cash = state_float(conn, "cash", LEGACY_INITIAL_CASH)
+    initial = state_float(conn, "initial_cash", LEGACY_INITIAL_CASH)
     realized_pnl = state_float(conn, "realized_pnl", 0.0)
     gross_realized_pnl = state_float(conn, "gross_realized_pnl", 0.0)
     trading_costs = state_float(conn, "trading_costs", 0.0)
@@ -4500,7 +4669,7 @@ def cmd_corporate_action(args: argparse.Namespace) -> None:
             if args.amount_per_share is None or args.amount_per_share <= 0:
                 raise ValueError("DIVIDEND requires a positive --amount-per-share")
             cash_effect = round(float(holding["shares"]) * args.amount_per_share, 2)
-            cash = state_float(conn, "cash", INITIAL_CASH) + cash_effect
+            cash = state_float(conn, "cash", LEGACY_INITIAL_CASH) + cash_effect
             realized = state_float(conn, "realized_pnl", 0.0) + cash_effect
             gross = state_float(conn, "gross_realized_pnl", 0.0) + cash_effect
             for key, value in (("cash", cash), ("realized_pnl", realized),
@@ -5485,13 +5654,30 @@ def cmd_intel_staging(args: argparse.Namespace) -> None:
 
 
 def cmd_dashboard(_: argparse.Namespace) -> None:
-    """Explain the optional dashboard integration.
-
-    This distribution keeps SQLite as the complete local interface. A
-    compatible Convex dashboard can be connected explicitly when desired.
-    """
-    print("The local SQLite ledger is ready without a dashboard.")
-    print("For an optional compatible Convex dashboard, configure CONVEX_URL and run convex-sync.")
+    """Report the optional companion dashboard connection without exposing secrets."""
+    convex_url = (
+        os.environ.get("CONVEX_URL")
+        or os.environ.get("NUXT_PUBLIC_CONVEX_URL")
+        or _read_convex_url_from_config()
+    )
+    sync_url = _dashboard_sync_endpoint(convex_url)
+    token_present = len(os.environ.get("HARPER_SYNC_TOKEN", "").strip()) >= 32
+    print(json.dumps({
+        "optional": True,
+        "source_of_truth": str(db_path()),
+        "contract_version": DASHBOARD_CONTRACT_VERSION,
+        "companion_repository": "https://github.com/balsimpson/harper-dashboard",
+        "convex_url": convex_url,
+        "sync_url": sync_url,
+        "sync_token_configured": token_present,
+        "configured": bool(convex_url and sync_url and token_present),
+        "next_action": (
+            "Review the production target and explicitly approve the first convex-sync."
+            if convex_url and sync_url and token_present
+            else "Deploy the optional companion dashboard and configure CONVEX_URL, "
+                 "HARPER_SYNC_URL, and HARPER_SYNC_TOKEN outside chat."
+        ),
+    }, indent=2))
 
 
 def _convex_evidence_source_scores(conn: sqlite3.Connection) -> list[dict]:
@@ -5551,6 +5737,36 @@ def _read_convex_url_from_config() -> str | None:
         return None
 
 
+def _dashboard_sync_endpoint(convex_url: str | None) -> str | None:
+    explicit = os.environ.get("HARPER_SYNC_URL", "").strip()
+    if explicit:
+        return explicit if explicit.rstrip("/").endswith("/harper-sync") else (
+            f"{explicit.rstrip('/')}/harper-sync"
+        )
+    if not convex_url:
+        return None
+    parsed = urllib.parse.urlparse(convex_url)
+    hostname = parsed.hostname or ""
+    if not hostname.endswith(".convex.cloud"):
+        return None
+    site_hostname = f"{hostname[:-len('.convex.cloud')]}.convex.site"
+    return urllib.parse.urlunparse((
+        parsed.scheme or "https", site_hostname, "/harper-sync", "", "", ""
+    ))
+
+
+def _dashboard_auto_sync_configured() -> bool:
+    convex_url = (
+        os.environ.get("CONVEX_URL")
+        or os.environ.get("NUXT_PUBLIC_CONVEX_URL")
+        or _read_convex_url_from_config()
+    )
+    return bool(
+        _dashboard_sync_endpoint(convex_url)
+        and len(os.environ.get("HARPER_SYNC_TOKEN", "").strip()) >= 32
+    )
+
+
 def cmd_convex_sync(_: argparse.Namespace) -> None:
     """Push current dashboard data to Convex cloud backend.
 
@@ -5565,9 +5781,20 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
     if not convex_url:
         raise ValueError(
             "Convex sync is not configured. Set CONVEX_URL only after deploying "
-            "a compatible, access-controlled sync:syncDashboard mutation."
+            "a compatible dashboard with an authenticated /harper-sync endpoint."
         )
-    endpoint = f"{convex_url.rstrip('/')}/api/mutation"
+    endpoint = _dashboard_sync_endpoint(convex_url)
+    if not endpoint:
+        raise ValueError(
+            "Dashboard sync endpoint is unavailable. Set HARPER_SYNC_URL to the "
+            "production Convex Site URL ending in /harper-sync."
+        )
+    sync_token = os.environ.get("HARPER_SYNC_TOKEN", "").strip()
+    if len(sync_token) < 32:
+        raise ValueError(
+            "HARPER_SYNC_TOKEN is missing or too short. Configure the same unique "
+            "32-character-or-longer token in Hermes and the Convex deployment."
+        )
 
     with connect() as conn:
         try:
@@ -5845,13 +6072,14 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
     args_payload = {k: v for k, v in args_payload.items() if v is not None}
 
     body = json.dumps({
-        "path": "sync:syncDashboard",
-        "args": args_payload,
+        "contractVersion": DASHBOARD_CONTRACT_VERSION,
+        "payload": args_payload,
     }).encode("utf-8")
 
-    headers = {"Content-Type": "application/json"}
-    if os.environ.get("CONVEX_AUTH_TOKEN"):
-        headers["Authorization"] = f"Bearer {os.environ['CONVEX_AUTH_TOKEN']}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {sync_token}",
+    }
     req = urllib.request.Request(
         endpoint,
         data=body,
@@ -5862,8 +6090,10 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read().decode())
-            if "errorMessage" in result:
-                raise ValueError(f"Convex sync failed: {result['errorMessage']}")
+            if "error" in result:
+                raise ValueError(f"Convex sync failed: {result['error']}")
+            if result.get("contractVersion") != DASHBOARD_CONTRACT_VERSION:
+                raise ValueError("Convex sync returned an incompatible contract version")
             print(json.dumps(result, indent=2))
     except urllib.error.HTTPError as e:
         raise ValueError(
@@ -5893,6 +6123,11 @@ def build_parser() -> argparse.ArgumentParser:
     profile_set.add_argument("--preferred-name")
     profile_set.add_argument("--market")
     profile_set.add_argument("--base-currency")
+    profile_set.add_argument(
+        "--initial-cash",
+        type=float,
+        help="Confirm the virtual portfolio's starting cash in the reporting currency",
+    )
     profile_set.add_argument("--user-timezone")
     profile_set.add_argument(
         "--research-access",
@@ -5901,6 +6136,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     profile_set.add_argument(
         "--automation", choices=("NOT_ASKED", "ENABLED", "SKIPPED")
+    )
+    profile_set.add_argument(
+        "--dashboard", choices=("NOT_ASKED", "ENABLED", "SKIPPED")
     )
     profile_set.add_argument("--confirm-scope-change")
     profile_set.set_defaults(func=cmd_profile_set)
@@ -6070,6 +6308,11 @@ def build_parser() -> argparse.ArgumentParser:
         "usage", help="Report Harper model, token, and cost usage"
     )
     usage.set_defaults(func=cmd_usage)
+
+    dashboard = sub.add_parser(
+        "dashboard", help="Inspect the optional companion dashboard connection"
+    )
+    dashboard.set_defaults(func=cmd_dashboard)
 
     export = sub.add_parser("export")
     export.add_argument("path")
@@ -6400,7 +6643,11 @@ def main() -> None:
         )
         if args.func is cmd_maintain and getattr(args, "dry_run", False):
             state_changed = False
-        if os.environ.get("VIRTUAL_INVESTOR_DISABLE_SYNC") != "1" and state_changed:
+        if (
+            os.environ.get("VIRTUAL_INVESTOR_DISABLE_SYNC") != "1"
+            and state_changed
+            and _dashboard_auto_sync_configured()
+        ):
             try:
                 cmd_convex_sync(args)
             except Exception:

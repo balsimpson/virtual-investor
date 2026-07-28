@@ -6,7 +6,7 @@ description: >-
   portfolio in any selected market.
 license: MIT
 metadata:
-  version: 1.0.0
+  version: 1.2.0
   author: Hermes Agent community
   category: finance
   tags: [harper, investing, portfolio, virtual, global-markets]
@@ -41,6 +41,9 @@ portfolio context shared by Desktop, CLI/TUI, Telegram, and other gateways.
 - `NEEDS_NAME`: use `suggested_response`; ask only for the preferred name.
 - `NEEDS_MARKET_CURRENCY`: use `suggested_response`; ask only for explicit
   market/currency confirmation.
+- `NEEDS_STARTING_CASH`: use `suggested_response`; offer the returned
+  `suggested_initial_cash` as an optional default and ask the user to confirm it
+  or choose another positive amount. Never persist the suggestion silently.
 - `NEEDS_TIMEZONE`: use `suggested_response`; ask only for the reporting
   timezone.
 - `NEEDS_RESEARCH_ACCESS`: explain that verified live web research is essential,
@@ -51,7 +54,9 @@ portfolio context shared by Desktop, CLI/TUI, Telegram, and other gateways.
   result is not `FULL`, use `suggested_response` and pause onboarding.
 - `READY`: use the persisted name naturally and state only portfolio facts
   present in the returned context. If `automation_offer_pending` is true, ask
-  the single scheduling question in `suggested_response`; otherwise offer its
+  the single scheduling question in `suggested_response`. Otherwise, if
+  `dashboard_offer_pending` is true, ask the single optional-dashboard question
+  in `suggested_response`. Only after both choices are saved should you offer
   normal next actions. Do not start a broader optional interview.
 
 Persist a confirmed answer immediately:
@@ -59,16 +64,20 @@ Persist a confirmed answer immediately:
 ~~~bash
 python3 scripts/portfolio.py profile set --preferred-name "NAME"
 python3 scripts/portfolio.py profile set --market "MARKET" --base-currency ISO_CODE
+python3 scripts/portfolio.py profile set --initial-cash AMOUNT
 python3 scripts/portfolio.py profile set --user-timezone "AREA/CITY"
 python3 scripts/portfolio.py profile set --research-access FULL|LIMITED|UNAVAILABLE
+python3 scripts/portfolio.py profile set --automation ENABLED|SKIPPED
+python3 scripts/portfolio.py profile set --dashboard ENABLED|SKIPPED
 ~~~
 
-Never infer name, market, currency, timezone, or research capability silently
-from account metadata, locale, location, or chat history. You may suggest a
-detected IANA timezone but must obtain confirmation. Any market can begin with
-a discovery adapter. Load the canonical skill's market-adapter contract,
-explain missing capabilities, and improve the adapter from sourced evidence as
-Harper works.
+Never infer name, market, currency, starting cash, timezone, or research
+capability silently from account metadata, locale, location, or chat history.
+The currency-aware starting-cash value is a suggestion, not a selection; save
+it only when the user confirms it. You may suggest a detected IANA timezone but
+must obtain confirmation. Any market can begin with a discovery adapter. Load
+the canonical skill's market-adapter contract, explain missing capabilities,
+and improve the adapter from sourced evidence as Harper works.
 
 Do not inspect only API-key names to decide research readiness. Hermes may use
 managed or self-hosted providers. Test the callable tools themselves. Never ask
@@ -82,6 +91,14 @@ and saves `--automation SKIPPED`. An affirmative answer saves `--automation
 ENABLED`, previews `market-adapter schedule`, and still requires explicit
 confirmation before any Hermes jobs are installed or enabled. Never enable
 automation unless the persisted research access is `FULL`.
+
+After the automation choice is saved, offer the optional private web dashboard
+once. A decline saves `--dashboard SKIPPED` and completes setup. Acceptance
+saves `--dashboard ENABLED`, then loads the canonical skill's dashboard
+operations reference. Explain that the companion dashboard uses the user's own
+Vercel, Convex, and optional Git-provider accounts. Never request credentials
+in chat, never reuse another operator's deployment, and require confirmation
+before creating cloud resources or sending the first full replacement sync.
 
 ## Voice
 

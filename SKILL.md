@@ -8,7 +8,7 @@ description: >-
   return against an adapter-selected benchmark when available.
 license: MIT
 metadata:
-  version: 5.0.0
+  version: 5.2.0
   author: Hermes Agent community
   category: finance
   tags: [investing, portfolio, trading, finance, virtual, global-markets]
@@ -26,83 +26,10 @@ data quality, risk controls, or the option to hold cash.
 
 ## Conversational activation
 
-`/harper` is the public first-use and resume entry point. It is supplied by the
-small companion skill in `entrypoints/harper`; `virtual-investor` remains the
-canonical internal identity for the engine, schedules, data, and release paths.
-Never edit the user's global `SOUL.md`, require a separate Hermes profile, or
-ask the user to switch personalities.
-
-On every Harper activation, initialize the ledger idempotently and then read
-the canonical onboarding route before replying:
-
-~~~bash
-python3 scripts/portfolio.py init
-python3 scripts/portfolio.py profile show
-~~~
-
-Follow the returned `stage` and ask at most its one question. Persist each
-confirmed answer immediately with `profile set`; never infer required fields
-from locale, Telegram metadata, device settings, or a guessed location. The
-`NEEDS_RESEARCH_ACCESS` stage is an action rather than a questionnaire: verify
-the actual Hermes web capabilities, persist the result, and then use the new
-`profile show` route.
-
-~~~bash
-python3 scripts/portfolio.py profile set --preferred-name "NAME"
-python3 scripts/portfolio.py profile set --market "MARKET" --base-currency ISO_CODE
-python3 scripts/portfolio.py profile set --user-timezone "AREA/CITY"
-python3 scripts/portfolio.py profile set --research-access FULL|LIMITED|UNAVAILABLE
-~~~
-
-After name, market, currency, and timezone are confirmed, explain in the
-conversation that Harper depends on live web research to find and verify
-investment evidence. Check the callable `web_search` and `web_extract` tools
-with one small, useful query for the selected market and one targeted extract
-from an official result. Do not decide capability from environment-variable
-names alone.
-
-- both calls succeed → persist `FULL`, rerun `profile show`, and continue
-- only one succeeds → persist `LIMITED`, use `suggested_response`, and pause
-- neither is callable or succeeds → persist `UNAVAILABLE`, use
-  `suggested_response`, and pause
-
-Never ask the user to paste an API key into chat. Direct them to run `hermes
-tools` and choose **Web Search & Extract**. One full provider is sufficient;
-Tavily and Firecrawl each support both capabilities. When the user says setup
-is complete, repeat the live check before persisting `FULL`. Do not claim
-Harper is ready, offer automation, research securities, or open/add a position
-until `profile show` returns `READY`.
-
-Any non-empty market can begin with a `DISCOVERY` adapter. A missing benchmark,
-market-specific cost model, preferred quote source, or regulatory source does
-not block onboarding or ordinary virtual-portfolio use. State the adapter's
-limitations, use its conservative fallback costs, report absolute return when
-no benchmark exists, and continue improving the adapter from sourced evidence.
-Never fabricate a source or imply that a discovery adapter has verified market
-rules. These adapter limitations are separate from Hermes web capability:
-working search and extraction are required to complete onboarding. For a
-`READY` profile, use the returned portfolio facts and offer one useful next
-action. Do not begin an optional questionnaire.
-
-After the profile is `READY`, offer automation once. Scheduling is optional and
-must never block onboarding. Verified `FULL` research access is mandatory
-before automation can be enabled. If accepted, save `--automation ENABLED`, preview
-`market-adapter schedule`, and require confirmation before installing the
-zero-agent timezone-aware dispatcher. If declined, save `--automation SKIPPED`.
-Never change global Hermes timezone configuration.
-
-Optional preferences are explicit, non-blocking research or explanation
-priorities. Save them only when stated or confirmed, accept `skip` and `not
-now`, ask at most one optional preference question after providing value, and
-never use them to force a trade, weaken a gate, or increase risk. Manage them
-with `profile preference set|delete|reset`. Preference reset is separate from
-portfolio reset.
-
-During Harper interactions, speak in first person as Harper: direct, concise,
-composed, and plain-spoken. Be confident about process, not outcomes. Say
-`NO_TRADE` plainly when warranted. Keep gateway messages compact, never promise
-returns, and never let voice instructions override deterministic portfolio,
-evidence, market-access, or risk rules.
+Read `references/onboarding.md` on every Harper activation and follow it until
+the profile is ready and the one-time automation and dashboard choices are
+saved. It contains the complete activation, onboarding, research-capability,
+optional-preference, and Harper-voice contract.
 
 ## Scope
 
@@ -153,20 +80,8 @@ adapter.
 
 ## First Run
 
-Resolve the target Hermes home instead of reusing another operator's paths or
-IDs. From the installed skill directory, run:
-
-~~~bash
-python3 scripts/portfolio.py init
-python3 scripts/portfolio.py diagnostics config
-python3 scripts/portfolio.py diagnostics schedule
-python3 scripts/portfolio.py status
-~~~
-
-The runtime uses only the Python standard library. Do not copy a virtual
-environment, database, delivery target, model name, or cron job ID from another
-installation. Read `references/runtime-baseline.md` for path overrides and
-`references/release-runbook.md` before replacing an existing installation.
+Read `references/cli-operations.md` before first-run setup. It contains the
+complete clean-install diagnostics and environment-isolation contract.
 
 ## Non-Negotiable Rules
 
@@ -299,52 +214,8 @@ references/financial-analysis.md for company and sector analysis.
 
 ## Core Commands
 
-Run commands from the skill directory with PYTHONPATH empty:
-
-~~~bash
-python3 scripts/portfolio.py init
-python3 scripts/portfolio.py profile show
-python3 scripts/portfolio.py profile set --preferred-name "NAME"
-python3 scripts/portfolio.py profile set --market "MARKET" --base-currency ISO_CODE
-python3 scripts/portfolio.py profile set --user-timezone "AREA/CITY"
-python3 scripts/portfolio.py market-adapter show "MARKET"
-python3 scripts/portfolio.py market-adapter schedule
-python3 scripts/portfolio.py market-session confirm DATE --status OPEN --source OFFICIAL_URL
-python3 scripts/portfolio.py status
-python3 scripts/portfolio.py learn briefing
-python3 scripts/portfolio.py learn report
-python3 scripts/portfolio.py learn params
-python3 scripts/portfolio.py learn historical analyze TICKER.NS
-python3 scripts/portfolio.py candidate screen --input candidates.json
-python3 scripts/portfolio.py candidate rank --top 10
-python3 scripts/portfolio.py decision rejection-report --mark-outcomes --refresh
-python3 scripts/portfolio.py snapshot
-python3 scripts/portfolio.py review
-python3 scripts/portfolio.py usage
-python3 scripts/portfolio.py maintain --dry-run
-python3 scripts/portfolio.py intel-sources quality
-~~~
-
-The local ledger does not require a dashboard. Run `convex-sync` only after
-deploying and configuring the compatible endpoint described in
-`references/dashboard-operations.md`.
-
-Use `reset --confirm RESET-HARPER` only for an explicitly authorized fresh
-start. It clears portfolio and learning history while retaining feed URLs as
-operational configuration. Sync immediately afterward to replace cloud data.
-
-Use decision record NO_TRADE for a sourced rejection decision. Use
-evidence add and evidence resolve to score source claims by subsequent
-accuracy rather than by portfolio return. Use corporate-action for dividends,
-splits, and bonuses; refresh the quote after a share-count adjustment.
-
-Use candidate screen to preserve every point-in-time screen and deep-research
-decision. Rejected candidates require one binding rejection gate. The close
-maintenance run marks available 5-, 10-, and 20-session forward outcomes and
-checks whether exposure stayed below 25% for five snapshots. That audit diagnoses
-the opportunity funnel and never authorizes a purchase.
-
-Read references/execution-and-costs.md before filing or executing trades.
+Read `references/cli-operations.md` before invoking an unfamiliar command,
+resetting or syncing state, or applying its candidate and evidence workflows.
 
 ## Review Semantics
 
@@ -365,6 +236,8 @@ Read references/execution-and-costs.md before filing or executing trades.
 
 | Read when | Reference |
 |---|---|
+| Activating Harper or completing onboarding | references/onboarding.md |
+| Running setup, CLI commands, reset, sync, or validation | references/cli-operations.md |
 | Filing, sizing, or rejecting a thesis | references/investment-policy.md |
 | Reading company accounts or sector KPIs | references/financial-analysis.md |
 | Building or updating any market capability | references/market-adapters.md |
@@ -384,14 +257,8 @@ Read references/execution-and-costs.md before filing or executing trades.
 
 ## Validation
 
-Run offline engine tests without dashboard sync:
-
-~~~bash
-VIRTUAL_INVESTOR_DISABLE_SYNC=1 PYTHONPATH="" python3 -m pytest tests/ -q
-~~~
-
-Do not use the live portfolio database for tests. Do not run live research,
-cron delivery, or Convex mutation checks as part of offline validation.
+Read and follow the offline-only validation contract in
+`references/cli-operations.md`.
 
 ## Phase 2 Shadow Scoring
 

@@ -43,7 +43,9 @@ rsync -a entrypoints/harper/ ~/.hermes/skills/finance/harper/
 ```
 
 Then start a new Hermes conversation and invoke `/harper`. Harper will ask for
-one onboarding detail at a time, verify live research access, and initialize
+one onboarding detail at a time, including the virtual starting cash after the
+reporting currency is known. It offers a sensible currency-aware default that
+the user can confirm or replace, verifies live research access, and initializes
 the local ledger idempotently.
 
 To configure research access, run:
@@ -93,6 +95,12 @@ python3 scripts/portfolio.py status
 Automation is optional. Harper only offers it after full research access is
 verified, and it requires explicit confirmation before installing or enabling
 Hermes jobs.
+
+After the automation choice, Harper offers the separate
+[Harper Dashboard](https://github.com/balsimpson/harper-dashboard) once. The
+dashboard is optional, deploys into the user's own Vercel and Convex accounts,
+and is never bundled into the installed skill. Harper works fully from its
+local SQLite ledger when the dashboard is skipped.
 
 ## Safety model
 

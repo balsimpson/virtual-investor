@@ -132,10 +132,11 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     fresh = read_json(run_cli(tmp_path, "profile", "show"))
     assert fresh["stage"] == "NEEDS_NAME"
     assert fresh["missing"] == [
-        "preferred_name", "market", "base_currency", "user_timezone",
-        "research_access",
+        "preferred_name", "market", "base_currency", "initial_cash",
+        "user_timezone", "research_access",
     ]
-    assert fresh["portfolio"]["cash"] == 100000.0
+    assert fresh["portfolio"]["cash"] is None
+    assert fresh["portfolio"]["valuation_status"] == "PENDING_STARTING_CASH"
     assert "virtual portfolio" in fresh["suggested_response"]
     assert fresh["suggested_response"].count("?") == 1
 
@@ -145,18 +146,35 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     assert named["profile"]["preferred_name"] == "Bál"
     assert named["stage"] == "NEEDS_MARKET_CURRENCY"
     assert named["missing"] == [
-        "market", "base_currency", "user_timezone", "research_access"
+        "market", "base_currency", "initial_cash", "user_timezone",
+        "research_access",
     ]
 
     resumed = read_json(run_cli(tmp_path, "profile", "show"))
     assert resumed["stage"] == "NEEDS_MARKET_CURRENCY"
     assert resumed["profile"]["preferred_name"] == "Bál"
 
-    ready = read_json(run_cli(
+    capital = read_json(run_cli(
         tmp_path, "profile", "set",
         "--market", "India", "--base-currency", "inr",
     ))
+    assert capital["stage"] == "NEEDS_STARTING_CASH"
+    assert capital["suggested_initial_cash"] == 100000.0
+    assert "₹100,000.00" in capital["suggested_response"]
+    assert capital["suggested_response"].count("?") == 1
+    ready = read_json(run_cli(
+        tmp_path, "profile", "set", "--initial-cash", "250000"
+    ))
     assert ready["stage"] == "NEEDS_TIMEZONE"
+    assert ready["profile"]["initial_cash"] == 250000.0
+    assert ready["suggested_initial_cash"] is None
+    with sqlite3.connect(tmp_path / "portfolio.db") as conn:
+        assert conn.execute(
+            "SELECT value FROM state WHERE key='cash'"
+        ).fetchone()[0] == "250000.0"
+        assert conn.execute(
+            "SELECT value FROM state WHERE key='initial_cash'"
+        ).fetchone()[0] == "250000.0"
     ready = read_json(run_cli(
         tmp_path, "profile", "set", "--user-timezone", "Asia/Kolkata"
     ))
@@ -189,9 +207,10 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     assert ready["profile"]["market"] == "INDIA_NSE_BSE"
     assert ready["profile"]["base_currency"] == "INR"
     assert ready["profile"]["onboarding_completed_at"]
-    assert "₹100,000.00" in ready["suggested_response"]
+    assert "₹250,000.00" in ready["suggested_response"]
     assert "no positions" in ready["suggested_response"]
     assert ready["automation_offer_pending"] is True
+    assert ready["dashboard_offer_pending"] is False
     assert "automatic schedule" in ready["suggested_response"]
     assert "won't create or enable jobs without your confirmation" in ready["suggested_response"]
 
@@ -201,19 +220,55 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     with sqlite3.connect(tmp_path / "portfolio.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM investor_profile").fetchone()[0] == 1
 
+    dashboard_offer = read_json(run_cli(
+        tmp_path, "profile", "set", "--automation", "SKIPPED"
+    ))
+    assert dashboard_offer["automation_offer_pending"] is False
+    assert dashboard_offer["dashboard_offer_pending"] is True
+    assert "optional private web dashboard" in dashboard_offer["suggested_response"]
+    assert "won't create cloud resources" in dashboard_offer["suggested_response"]
+
+    dashboard_skipped = read_json(run_cli(
+        tmp_path, "profile", "set", "--dashboard", "SKIPPED"
+    ))
+    assert dashboard_skipped["dashboard_offer_pending"] is False
+    assert dashboard_skipped["profile"]["dashboard_preference"] == "SKIPPED"
+    assert "quick market brief" in dashboard_skipped["suggested_response"]
+
 
 def test_existing_india_portfolio_upgrade_seeds_scope_without_guessing_name(tmp_path):
     database = tmp_path / "portfolio.db"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         conn.execute("INSERT INTO state(key, value) VALUES ('cash', '73500')")
+        conn.execute("INSERT INTO state(key, value) VALUES ('initial_cash', '90000')")
     upgraded = read_json(run_cli(tmp_path, "profile", "show"))
     assert upgraded["stage"] == "NEEDS_NAME"
     assert upgraded["missing"] == ["preferred_name", "research_access"]
     assert upgraded["profile"]["market"] == "INDIA_NSE_BSE"
     assert upgraded["profile"]["base_currency"] == "INR"
+    assert upgraded["profile"]["initial_cash"] == 90000.0
     assert upgraded["profile"]["preferred_name"] is None
+    assert upgraded["profile"]["dashboard_preference"] == "NOT_ASKED"
     assert upgraded["portfolio"]["cash"] == 73500.0
+
+
+def test_dashboard_status_derives_site_endpoint_without_exposing_token(tmp_path):
+    result = read_json(run_cli(
+        tmp_path,
+        "dashboard",
+        extra_env={
+            "CONVEX_URL": "https://private-install.eu-west-1.convex.cloud",
+            "HARPER_SYNC_TOKEN": "a" * 32,
+        },
+    ))
+    assert result["configured"] is True
+    assert result["contract_version"] == 1
+    assert result["sync_url"] == (
+        "https://private-install.eu-west-1.convex.site/harper-sync"
+    )
+    assert result["sync_token_configured"] is True
+    assert "a" * 32 not in json.dumps(result)
 
 
 def test_profile_accepts_global_scope_and_validates_currency_timezone_and_names(tmp_path):
@@ -243,12 +298,47 @@ def test_profile_accepts_global_scope_and_validates_currency_timezone_and_names(
     assert profile["stage"] == "NEEDS_NAME"
 
 
+def test_starting_cash_uses_currency_default_and_requires_confirmation(tmp_path):
+    run_cli(tmp_path, "init")
+    run_cli(tmp_path, "profile", "set", "--preferred-name", "Ana")
+    profile = read_json(run_cli(
+        tmp_path, "profile", "set", "--market", "United States equities",
+        "--base-currency", "USD",
+    ))
+    assert profile["stage"] == "NEEDS_STARTING_CASH"
+    assert profile["suggested_initial_cash"] == 10000.0
+    assert "$10,000.00" in profile["suggested_response"]
+
+    for invalid in ("0", "-100", "nan", "inf"):
+        rejected = run_cli(
+            tmp_path, "profile", "set", "--initial-cash", invalid, check=False
+        )
+        assert rejected.returncode == 1
+        assert "positive finite amount" in rejected.stderr
+
+    profile = read_json(run_cli(
+        tmp_path, "profile", "set", "--initial-cash", "25000"
+    ))
+    assert profile["stage"] == "NEEDS_TIMEZONE"
+    assert profile["profile"]["initial_cash"] == 25000.0
+
+    changed = read_json(run_cli(
+        tmp_path, "profile", "set", "--base-currency", "BRL",
+        "--confirm-scope-change", "CHANGE-HARPER-SCOPE",
+    ))
+    assert changed["stage"] == "NEEDS_STARTING_CASH"
+    assert changed["profile"]["initial_cash"] is None
+    assert changed["suggested_initial_cash"] == 100000.0
+    assert "BRL 100,000.00" in changed["suggested_response"]
+
+
 def test_optional_preferences_are_explicit_and_portfolio_reset_keeps_profile(tmp_path):
     run_cli(tmp_path, "init")
     run_cli(tmp_path, "profile", "set", "--preferred-name", "Bal")
     run_cli(
         tmp_path, "profile", "set", "--market", "NSE/BSE", "--base-currency", "INR"
     )
+    run_cli(tmp_path, "profile", "set", "--initial-cash", "250000")
     run_cli(tmp_path, "profile", "set", "--user-timezone", "Asia/Kolkata")
     run_cli(tmp_path, "profile", "set", "--research-access", "FULL")
     saved = read_json(run_cli(
@@ -266,14 +356,15 @@ def test_optional_preferences_are_explicit_and_portfolio_reset_keeps_profile(tmp
     assert retained["profile"]["optional_preferences"] == {
         "explanation_depth": "beginner"
     }
-    assert retained["portfolio"]["cash"] == 100000.0
+    assert retained["portfolio"]["cash"] == 250000.0
+    assert retained["profile"]["initial_cash"] == 250000.0
 
     cleared = read_json(run_cli(
         tmp_path, "profile", "preference", "reset",
         "--confirm", "RESET-HARPER-PREFERENCES",
     ))
     assert cleared["profile"]["optional_preferences"] == {}
-    assert cleared["portfolio"]["cash"] == 100000.0
+    assert cleared["portfolio"]["cash"] == 250000.0
 
 
 def test_global_discovery_adapter_operates_without_benchmark_cost_or_regulatory_data(tmp_path):
@@ -283,6 +374,7 @@ def test_global_discovery_adapter_operates_without_benchmark_cost_or_regulatory_
         tmp_path, "profile", "set", "--market", "Brazil equities",
         "--base-currency", "BRL",
     )
+    run_cli(tmp_path, "profile", "set", "--initial-cash", "100000")
     profile = read_json(run_cli(
         tmp_path, "profile", "set", "--user-timezone", "America/Sao_Paulo"
     ))
@@ -373,7 +465,7 @@ def test_scope_change_is_blocked_once_financial_history_exists(tmp_path):
     run_cli(
         tmp_path, "profile", "set", "--market", "United States equities",
         "--base-currency", "USD", "--user-timezone", "America/New_York",
-        "--research-access", "FULL",
+        "--initial-cash", "25000", "--research-access", "FULL",
     )
     with sqlite3.connect(tmp_path / "portfolio.db") as conn:
         conn.execute(
@@ -390,6 +482,11 @@ def test_scope_change_is_blocked_once_financial_history_exists(tmp_path):
     )
     assert rejected.returncode == 1
     assert "separate sourced migration" in rejected.stderr
+    rejected_cash = run_cli(
+        tmp_path, "profile", "set", "--initial-cash", "30000", check=False
+    )
+    assert rejected_cash.returncode == 1
+    assert "cannot change after financial history" in rejected_cash.stderr
     unchanged = read_json(run_cli(tmp_path, "profile", "show"))
     assert unchanged["profile"]["market"] == "UNITED_STATES_EQUITIES"
     assert unchanged["profile"]["base_currency"] == "USD"

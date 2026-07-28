@@ -76,16 +76,17 @@ companion skill initializes the canonical engine idempotently and routes the
 conversation from `profile show`. It does not alter global personality or
 create scheduled jobs.
 
-Initialization creates a new local ledger with 100,000 units of virtual cash
-when the database does not exist. Onboarding assigns the confirmed reporting
-currency before presenting that balance. It never connects to a broker or
-places real orders.
+Initialization creates the local ledger, but the user chooses its virtual
+starting cash during onboarding after confirming the reporting currency.
+Harper offers a round currency-aware default, such as 100,000 INR or 10,000
+USD, which must be explicitly confirmed or replaced. It never connects to a
+broker or places real orders.
 
 ## Default safety parameters
 
 | Parameter | Default |
 |---|---:|
-| Initial virtual cash | 100,000 in the confirmed reporting currency |
+| Initial virtual cash | User-selected; Harper offers a currency-aware suggestion |
 | Risk per thesis | 1% of NAV |
 | Maximum portfolio heat | 5% of NAV |
 | Maximum position weight | 20% of NAV |
