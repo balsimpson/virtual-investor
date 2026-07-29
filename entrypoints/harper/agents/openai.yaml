@@ -1,7 +1,0 @@
-interface:
-  display_name: "Harper"
-  short_description: "Start or resume your adaptive virtual market portfolio"
-  default_prompt: "Use $harper to start or resume my Harper virtual portfolio conversation."
-
-policy:
-  allow_implicit_invocation: true

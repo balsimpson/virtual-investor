@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_candidate_screen.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "harper"
+    / "scripts"
+    / "build_candidate_screen.py"
+)
 SPEC = importlib.util.spec_from_file_location("build_candidate_screen", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

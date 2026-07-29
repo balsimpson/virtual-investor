@@ -1,23 +1,23 @@
 ---
-name: virtual-investor
+name: harper
 description: >-
-  Run and review Harper, an adaptive long-only virtual market portfolio.
-  Use for sourced intraday BUY/SELL cycles, longer-held long
+  Start or review Harper, an adaptive long-only virtual market portfolio.
+  Use when the user invokes /harper or asks for sourced intraday BUY/SELL
+  cycles, longer-held long
   positions, continuous research, catalyst theses, risk-gated virtual trades,
   corporate actions, forecast calibration, marked-to-market NAV, and active
   return against an adapter-selected benchmark when available.
 license: MIT
+version: 6.0.1
+author: balsimpson
 metadata:
-  version: 5.2.0
-  author: Hermes Agent community
-  category: finance
-  tags: [investing, portfolio, trading, finance, virtual, global-markets]
   hermes:
+    category: finance
     tags: [investing, portfolio, trading, finance, virtual, global-markets, market-adapters]
     related_skills: [cron-patterns, python-scripting, nuxt-convex-stack]
 ---
 
-# Virtual Investor — Harper Edition
+# Harper — Virtual Investor
 
 Run a disciplined virtual portfolio in the user's selected market. Seek
 evidence-backed differences between market expectations and probable outcomes.
@@ -27,9 +27,9 @@ data quality, risk controls, or the option to hold cash.
 ## Conversational activation
 
 Read `references/onboarding.md` on every Harper activation and follow it until
-the profile is ready and the one-time automation and dashboard choices are
-saved. It contains the complete activation, onboarding, research-capability,
-optional-preference, and Harper-voice contract.
+the profile is ready and the one-time automation, applicable delivery, and
+dashboard choices are saved. It contains the complete activation, onboarding,
+research-capability, optional-preference, and Harper-voice contract.
 
 ## Scope
 
@@ -42,6 +42,22 @@ optional-preference, and Harper-voice contract.
 - Keep SQLite at `~/.hermes/data/virtual-investor/portfolio.db` as the source
   of truth. Treat dashboard sync as an optional read-model integration.
 - Never place real orders or connect to a broker.
+
+## Companion dashboard
+
+Treat the separately maintained
+[Harper Dashboard](https://github.com/balsimpson/harper-dashboard) as the
+optional Nuxt/Convex read model for this skill. When changing dashboard sync,
+valuation fields, profile or market-adapter metadata, inspect both repositories
+when the companion checkout is available.
+
+This repository owns `DASHBOARD_CONTRACT_VERSION`, the payload produced by
+`cmd_convex_sync`, and the authoritative SQLite calculations. The dashboard
+repository owns the matching Convex schema, sync validators, queries, and Nuxt
+presentation. Keep both sides on the same contract version, update regression
+checks in both repositories, and deploy the compatible dashboard before sending
+a new payload. Never deploy or run the replacing `convex-sync` command without
+the user's explicit approval of the exact target.
 
 ## Market adapters
 
@@ -77,11 +93,6 @@ Missing information degrades explicitly:
 
 Read `references/market-adapters.md` before creating, updating, or automating an
 adapter.
-
-## First Run
-
-Read `references/cli-operations.md` before first-run setup. It contains the
-complete clean-install diagnostics and environment-isolation contract.
 
 ## Non-Negotiable Rules
 
@@ -182,9 +193,10 @@ adapters learn their own sessions from sourced evidence. Use
 Read references/runtime-baseline.md and references/market-adapters.md before
 installing or changing cron wiring.
 The zero-token failed-run watchdog can queue an incomplete Harper session on the
-first scheduler tick after a gateway restart. It discovers jobs named
-`virtual-investor` or beginning with `virtual-investor-`, never retries a
-completed application run, and caps recovery at two attempts per session.
+first scheduler tick after a gateway restart. It discovers jobs named `harper`
+or beginning with `harper-`; legacy `virtual-investor` names remain supported.
+It never retries a completed application run and caps recovery at two attempts
+per session.
 
 ## Thesis Contract
 
@@ -211,11 +223,6 @@ references/financial-analysis.md for company and sector analysis.
 - `STRONG_OPPORTUNITY`: diagnostic exposure band 70–90%.
 - The bands trigger opportunity-set review; they never bypass a hard gate or force a purchase.
 - Every `NO_TRADE` decision records why cash is held: no qualifying setup, defensive regime, risk capacity, awaiting confirmation, or an operational constraint.
-
-## Core Commands
-
-Read `references/cli-operations.md` before invoking an unfamiliar command,
-resetting or syncing state, or applying its candidate and evidence workflows.
 
 ## Review Semantics
 
@@ -254,11 +261,6 @@ resetting or syncing state, or applying its candidate and evidence workflows.
 | Deciding when and how to use research subagents | references/research-delegation.md |
 | Maintaining Convex/Nuxt sync | references/dashboard-operations.md |
 | Releasing, resetting, backing up, or rolling back | references/release-runbook.md |
-
-## Validation
-
-Read and follow the offline-only validation contract in
-`references/cli-operations.md`.
 
 ## Phase 2 Shadow Scoring
 

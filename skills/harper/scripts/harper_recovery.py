@@ -152,8 +152,8 @@ def _discover_harper_job_ids() -> tuple[str, ...]:
         if isinstance(job, dict)
         and job.get("id")
         and (
-            job.get("name") == "virtual-investor"
-            or str(job.get("name", "")).startswith("virtual-investor-")
+            job.get("name") in {"harper", "virtual-investor"}
+            or str(job.get("name", "")).startswith(("harper-", "virtual-investor-"))
         )
     )
 

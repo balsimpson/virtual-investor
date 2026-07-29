@@ -53,7 +53,7 @@ SUGGESTED_INITIAL_CASH_BY_CURRENCY = {
 BENCHMARK_TICKER = "NIFTY50-TRI"
 MAX_POSITION_WEIGHT = 0.20
 MIN_HOLD_DAYS = 0
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 ONBOARDING_VERSION = 4
 SUPPORTED_MARKET = "INDIA_NSE_BSE"
 SUPPORTED_CURRENCY = "INR"
@@ -109,7 +109,7 @@ CANDIDATE_OUTCOME_HORIZONS = (5, 10, 20)
 SCORING_MODEL_VERSION = "2.0-shadow"
 DECISION_MODEL_VERSION = "3.0-multi-thesis-shadow"
 OPERATING_SCHEDULE_VERSION = "2026.1"
-DASHBOARD_CONTRACT_VERSION = 1
+DASHBOARD_CONTRACT_VERSION = 2
 OPERATING_SESSIONS = (
     {"label": "preparation", "time": "08:55", "purpose": "Research, risk and market-session preparation; no trade."},
     {"label": "open-pulse", "time": "09:15", "purpose": "Market-open reconnaissance; no trade."},
@@ -800,6 +800,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 CHECK(research_access IN ('NOT_CHECKED', 'FULL', 'LIMITED', 'UNAVAILABLE')),
             research_checked_at TEXT,
             automation_preference TEXT NOT NULL DEFAULT 'NOT_ASKED',
+            delivery_preference TEXT NOT NULL DEFAULT 'NOT_ASKED'
+                CHECK(delivery_preference IN ('NOT_ASKED', 'MESSAGING', 'LOCAL')),
+            delivery_target TEXT,
+            delivery_confirmed_at TEXT,
             dashboard_preference TEXT NOT NULL DEFAULT 'NOT_ASKED'
                 CHECK(dashboard_preference IN ('NOT_ASKED', 'ENABLED', 'SKIPPED')),
             onboarding_version INTEGER NOT NULL DEFAULT 1,
@@ -836,6 +840,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE investor_profile ADD COLUMN automation_preference "
             "TEXT NOT NULL DEFAULT 'NOT_ASKED'"
+        )
+    if "delivery_preference" not in profile_cols:
+        conn.execute(
+            "ALTER TABLE investor_profile ADD COLUMN delivery_preference "
+            "TEXT NOT NULL DEFAULT 'NOT_ASKED'"
+        )
+    if "delivery_target" not in profile_cols:
+        conn.execute("ALTER TABLE investor_profile ADD COLUMN delivery_target TEXT")
+    if "delivery_confirmed_at" not in profile_cols:
+        conn.execute(
+            "ALTER TABLE investor_profile ADD COLUMN delivery_confirmed_at TEXT"
         )
     if "dashboard_preference" not in profile_cols:
         conn.execute(
@@ -1081,7 +1096,7 @@ def state_float(conn: sqlite3.Connection, key: str, default: float) -> float:
 
 
 def _load_harper_cron_jobs() -> tuple[dict[str, dict], set[str]]:
-    """Return virtual-investor cron jobs and their delivery chat ids."""
+    """Return Harper cron jobs and their delivery chat ids."""
     path = hermes_cron_jobs_path()
     if not path.exists():
         return {}, set()
@@ -1094,7 +1109,8 @@ def _load_harper_cron_jobs() -> tuple[dict[str, dict], set[str]]:
     delivery_chat_ids: set[str] = set()
     for job in payload.get("jobs", []):
         skills = job.get("skills") or []
-        if job.get("skill") != "virtual-investor" and "virtual-investor" not in skills:
+        configured_skills = {str(job.get("skill") or ""), *(str(s) for s in skills)}
+        if not configured_skills.intersection({"harper", "virtual-investor"}):
             continue
         job_id = str(job.get("id") or "").strip()
         if not job_id:
@@ -2281,6 +2297,15 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
                 " Would you like me to prepare an automatic schedule around this market's "
                 "hours? I won't create or enable jobs without your confirmation."
             )
+        elif (
+            row["automation_preference"] == "ENABLED"
+            and row["delivery_preference"] == "NOT_ASKED"
+        ):
+            next_action = (
+                " I'll check the messaging destinations already configured in Hermes, then "
+                "you can choose where to receive updates or keep them local. I won't send a "
+                "test or install jobs without your confirmation."
+            )
         elif row["dashboard_preference"] == "NOT_ASKED":
             next_action = (
                 " Would you like the optional private web dashboard? It uses your own "
@@ -2316,6 +2341,9 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
             "research_access": row["research_access"],
             "research_checked_at": row["research_checked_at"],
             "automation_preference": row["automation_preference"],
+            "delivery_preference": row["delivery_preference"],
+            "delivery_target": row["delivery_target"],
+            "delivery_confirmed_at": row["delivery_confirmed_at"],
             "dashboard_preference": row["dashboard_preference"],
             "onboarding_version": int(row["onboarding_version"]),
             "onboarding_completed_at": row["onboarding_completed_at"],
@@ -2328,9 +2356,18 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
         "automation_offer_pending": (
             complete and row["automation_preference"] == "NOT_ASKED"
         ),
+        "delivery_offer_pending": (
+            complete
+            and row["automation_preference"] == "ENABLED"
+            and row["delivery_preference"] == "NOT_ASKED"
+        ),
         "dashboard_offer_pending": (
             complete
             and row["automation_preference"] != "NOT_ASKED"
+            and (
+                row["automation_preference"] == "SKIPPED"
+                or row["delivery_preference"] != "NOT_ASKED"
+            )
             and row["dashboard_preference"] == "NOT_ASKED"
         ),
         "research_check_required": row["research_access"] != "FULL",
@@ -2353,7 +2390,7 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
     if all(value is None for value in (
         args.preferred_name, args.market, args.base_currency,
         args.initial_cash, args.user_timezone, args.research_access,
-        args.automation, args.dashboard,
+        args.automation, args.delivery_target, args.dashboard,
     )):
         raise ValueError("profile set requires at least one profile field")
     updates = {}
@@ -2380,6 +2417,29 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
         updates["research_checked_at"] = now()
     if args.automation is not None:
         updates["automation_preference"] = args.automation
+        if args.automation == "SKIPPED":
+            updates["delivery_preference"] = "NOT_ASKED"
+            updates["delivery_target"] = None
+            updates["delivery_confirmed_at"] = None
+    if args.delivery_target is not None:
+        delivery_target = args.delivery_target.strip()
+        if not delivery_target:
+            raise ValueError("delivery target cannot be empty")
+        if len(delivery_target) > 512 or any(char.isspace() for char in delivery_target):
+            raise ValueError(
+                "delivery target must be a configured Hermes target without whitespace"
+            )
+        if delivery_target.lower() == "local":
+            updates["delivery_preference"] = "LOCAL"
+            updates["delivery_target"] = "local"
+        else:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*(?::[^\s]+)?", delivery_target):
+                raise ValueError(
+                    "delivery target must use platform or platform:destination format"
+                )
+            updates["delivery_preference"] = "MESSAGING"
+            updates["delivery_target"] = delivery_target
+        updates["delivery_confirmed_at"] = now()
     if args.dashboard is not None:
         updates["dashboard_preference"] = args.dashboard
 
@@ -2390,12 +2450,19 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
         effective_research_access = updates.get(
             "research_access", current["research_access"]
         )
+        effective_automation = updates.get(
+            "automation_preference", current["automation_preference"]
+        )
         effective_currency = updates.get("base_currency", current["base_currency"])
         if args.initial_cash is not None and not effective_currency:
             raise ValueError("set the reporting currency before initial cash")
         if args.automation == "ENABLED" and effective_research_access != "FULL":
             raise ValueError(
                 "automated sessions require verified FULL web search and source extraction"
+            )
+        if args.delivery_target is not None and effective_automation != "ENABLED":
+            raise ValueError(
+                "choose a delivery target only after automated sessions are enabled"
             )
         if "market" in updates:
             _ensure_discovery_adapter(
@@ -5810,7 +5877,8 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             conn.commit()
         status_data = portfolio_status(conn)
         snapshots_rows = conn.execute(
-            "SELECT total, timestamp FROM snapshots ORDER BY id"
+            "SELECT cash, holdings_value, total, benchmark_price, timestamp"
+            " FROM snapshots ORDER BY id"
         ).fetchall()
         theses_active = [dict(r) for r in conn.execute(
             "SELECT ticker, direction, confidence, horizon, target, catalyst, invalidation,"
@@ -5854,8 +5922,18 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             " FROM research_library ORDER BY id DESC LIMIT 10"
         )]
 
+        profile_row = conn.execute(
+            "SELECT preferred_name, market, base_currency, initial_cash, user_timezone, updated_at"
+            " FROM investor_profile WHERE id = 1"
+        ).fetchone()
+        adapter = _get_adapter(conn) or {}
+        adapter_health = _adapter_health(adapter) if adapter else {}
+        adapter_schedule = adapter.get("session_schedule") or {}
+        adapter_cost_model = adapter.get("cost_model") or GENERIC_COST_FALLBACK
+        benchmark_ticker = adapter.get("benchmark_ticker")
+
         mkts = {}
-        for ticker in ("^NSEI", "^BSESN"):
+        for ticker in ([benchmark_ticker] if benchmark_ticker else []):
             rows = conn.execute(
                 "SELECT date, close FROM historical_prices WHERE ticker=? ORDER BY date", (ticker,)
             ).fetchall()
@@ -5864,8 +5942,9 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
                 latest = closes[-1]
                 low5, high5 = min(closes), max(closes)
                 pct = (latest - low5) / (high5 - low5) * 100 if (high5 - low5) else 50
-                label = "Nifty 50" if ticker == "^NSEI" else "Sensex"
+                label = str(ticker)
                 mkts[label] = {
+                    "ticker": str(ticker),
                     "latest": round(latest, 2),
                     "low5": round(low5, 2),
                     "high5": round(high5, 2),
@@ -5933,14 +6012,17 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             "SELECT ticker, price, source, asof, recorded_at FROM quotes ORDER BY id DESC LIMIT 100"
         )]
 
-        # Historical prices — last 30 rows per held ticker + Nifty/Sensex (most useful for charts)
+        # Historical prices — last 30 rows per held ticker and configured benchmark.
         held_tickers = tuple(
             r[0] for r in conn.execute(
                 "SELECT DISTINCT ticker FROM holdings ORDER BY ticker"
             ).fetchall()
-        ) or ("^NSEI",)
+        )
         historical_prices = []
-        for ticker in held_tickers + ("^NSEI", "^BSESN"):
+        history_tickers = tuple(dict.fromkeys(
+            held_tickers + ((str(benchmark_ticker),) if benchmark_ticker else ())
+        ))
+        for ticker in history_tickers:
             rows = conn.execute(
                 "SELECT ticker, date, open, high, low, close, volume"
                 " FROM historical_prices WHERE ticker=? ORDER BY date DESC LIMIT 30",
@@ -5973,8 +6055,27 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             " FROM llm_usage ORDER BY started_at"
         )]
 
+        initial_cash_row = conn.execute(
+            "SELECT value FROM state WHERE key='initial_cash'"
+        ).fetchone()
+        market_session_payload = {
+            "date": _state_text(conn, "market_session_date", ""),
+            "status": _state_text(conn, "market_session_status", "UNKNOWN"),
+            "open": _state_text(conn, "market_session_open", ""),
+            "close": _state_text(conn, "market_session_close", ""),
+            "source": _state_text(conn, "market_session_source", ""),
+            "confirmed_at": _state_text(conn, "market_session_confirmed_at", ""),
+        }
+
     nav_history = [
-        {"t": r["timestamp"][:10], "v": round(float(r["total"]), 2)}
+        {
+            "t": r["timestamp"],
+            "v": round(float(r["total"]), 2),
+            "cash": round(float(r["cash"]), 2),
+            "holdings_value": round(float(r["holdings_value"]), 2),
+            **({"benchmark_price": round(float(r["benchmark_price"]), 6)}
+               if r["benchmark_price"] is not None else {}),
+        }
         for r in snapshots_rows
     ]
 
@@ -5983,10 +6084,9 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
     # Build the payload matching the Convex syncDashboard mutation schema
     # Nulls must be stripped from v.optional() fields — Convex rejects null (wants absence)
 
-    initial_cash = conn.execute(
-        "SELECT value FROM state WHERE key='initial_cash'"
-    ).fetchone()
-    initial_cash_val = float(initial_cash[0]) if initial_cash else status_data["cash"]
+    initial_cash_val = (
+        float(initial_cash_row[0]) if initial_cash_row else status_data["cash"]
+    )
 
     def strip_nulls(d):
         """Recursively remove None values from a dict (Convex optional fields).
@@ -6000,8 +6100,94 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             return [strip_nulls(v) for v in d]
         return d
 
+    profile_payload = {
+        "preferred_name": profile_row["preferred_name"] if profile_row else None,
+        "user_timezone": (
+            profile_row["user_timezone"]
+            if profile_row and profile_row["user_timezone"]
+            else "UTC"
+        ),
+        "portfolio_currency": (
+            profile_row["base_currency"] if profile_row else status_data["reporting_currency"]
+        ),
+        "initial_capital": (
+            float(profile_row["initial_cash"])
+            if profile_row and profile_row["initial_cash"] is not None
+            else initial_cash_val
+        ),
+    }
+    portfolio_config = {
+        "market_id": adapter.get("market_id") or status_data.get("market_id") or "UNCONFIGURED",
+        "market_label": adapter.get("display_name") or (
+            profile_row["market"] if profile_row else "Unconfigured market"
+        ),
+        "portfolio_currency": status_data["reporting_currency"],
+        "benchmark_ticker": benchmark_ticker,
+        "benchmark_name": benchmark_ticker,
+        "benchmark_mode": adapter_health.get("benchmark_mode", "ABSOLUTE_RETURN_ONLY"),
+        "cost_mode": adapter_health.get("cost_mode", "CONSERVATIVE_FALLBACK"),
+    }
+    dashboard_schedule = dict(adapter_schedule)
+    dashboard_sessions = []
+    if (adapter.get("market_timezone") and profile_row and profile_row["user_timezone"]):
+        market_zone = ZoneInfo(str(adapter["market_timezone"]))
+        user_zone = ZoneInfo(str(profile_row["user_timezone"]))
+        reference_date = datetime.now(market_zone).date()
+        for session in adapter_schedule.get("sessions") or []:
+            hour, minute = _parse_hhmm(str(session["time"]), "session time")
+            market_dt = datetime.combine(
+                reference_date, datetime.min.time(), tzinfo=market_zone
+            ).replace(hour=hour, minute=minute)
+            local_dt = market_dt.astimezone(user_zone)
+            dashboard_sessions.append({
+                **session,
+                "market_time": market_dt.strftime("%H:%M"),
+                "user_time": local_dt.strftime("%H:%M"),
+                "user_timezone": str(profile_row["user_timezone"]),
+                "user_date_offset_days": (local_dt.date() - market_dt.date()).days,
+            })
+    else:
+        dashboard_sessions = list(adapter_schedule.get("sessions") or [])
+    dashboard_schedule["sessions"] = dashboard_sessions
+    market_adapter_payload = {
+        "market_id": adapter.get("market_id") or portfolio_config["market_id"],
+        "display_name": adapter.get("display_name") or portfolio_config["market_label"],
+        "status": adapter.get("status") or "DISCOVERY",
+        "version": int(adapter.get("version") or 1),
+        "market_timezone": adapter.get("market_timezone"),
+        "native_currency": adapter.get("native_currency"),
+        "benchmark_ticker": benchmark_ticker,
+        "session_schedule_json": json.dumps(dashboard_schedule, ensure_ascii=False),
+        "cost_model_json": json.dumps(adapter_cost_model, ensure_ascii=False),
+        "capabilities_json": json.dumps(adapter.get("capabilities") or {}, ensure_ascii=False),
+        "sources_json": json.dumps(adapter.get("sources") or {}, ensure_ascii=False),
+        "market_session_json": json.dumps(market_session_payload, ensure_ascii=False),
+        "last_validated_at": adapter.get("last_validated_at"),
+        "updated_at": adapter.get("updated_at"),
+    }
+    valuation_payload = {
+        "valued_at": snapshots_rows[-1]["timestamp"] if snapshots_rows else now(),
+        "status": status_data.get("valuation_status", "UNAVAILABLE"),
+        "portfolio_currency": status_data["reporting_currency"],
+        "stale_tickers": status_data.get("stale_tickers", []),
+        "gross_realized_pnl": status_data.get("gross_realized_pnl", 0),
+        "trading_costs": status_data.get("trading_costs", 0),
+        "portfolio_heat_pct": status_data.get("portfolio_heat_pct", 0),
+        "risk_data_missing": status_data.get("risk_data_missing", []),
+    }
+
     args_payload = {
+        "profile": strip_nulls(profile_payload),
+        "portfolio_config": strip_nulls(portfolio_config),
+        "market_adapter": strip_nulls(market_adapter_payload),
+        "valuation": strip_nulls(valuation_payload),
+        "sync_metadata": {
+            "source_updated_at": profile_row["updated_at"] if profile_row else now(),
+            "synced_at": now(),
+            "complete": True,
+        },
         "status": strip_nulls({
+            "reporting_currency": status_data["reporting_currency"],
             "cash": status_data["cash"],
             "initial_cash": initial_cash_val,
             "holdings": [
@@ -6016,6 +6202,8 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
                     "unrealized_pnl": h["unrealized_pnl"],
                     "quote_source": h.get("quote_source"),
                     "quote_asof": h.get("quote_asof"),
+                    "quote_age_hours": h.get("quote_age_hours"),
+                    "trade_style": h.get("trade_style"),
                     "opened_at": h.get("opened_at"),
                 })
                 for h in status_data.get("holdings", [])
@@ -6028,6 +6216,12 @@ def cmd_convex_sync(_: argparse.Namespace) -> None:
             "net_exposure_pct": status_data.get("net_exposure_pct", 0),
             "return": status_data.get("return", 0),
             "return_pct": status_data.get("return_pct", 0),
+            "valuation_status": status_data.get("valuation_status", "UNAVAILABLE"),
+            "stale_tickers": status_data.get("stale_tickers", []),
+            "portfolio_heat_pct": status_data.get("portfolio_heat_pct", 0),
+            "risk_data_missing": status_data.get("risk_data_missing", []),
+            "gross_realized_pnl": status_data.get("gross_realized_pnl", 0),
+            "trading_costs": status_data.get("trading_costs", 0),
             "exposure_regime": status_data.get("exposure_regime"),
             "latest_cash_reason": status_data.get("latest_cash_reason"),
             "latest_run": strip_nulls({
@@ -6136,6 +6330,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     profile_set.add_argument(
         "--automation", choices=("NOT_ASKED", "ENABLED", "SKIPPED")
+    )
+    profile_set.add_argument(
+        "--delivery-target",
+        help=(
+            "Persist a confirmed target returned by `hermes send --list --json`, "
+            "or local for local-only reports"
+        ),
     )
     profile_set.add_argument(
         "--dashboard", choices=("NOT_ASKED", "ENABLED", "SKIPPED")

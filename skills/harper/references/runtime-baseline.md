@@ -17,10 +17,10 @@ Hermes Web Search & Extract, configured separately from the skill.
 
 ## First run
 
-Install the folder at `~/.hermes/skills/finance/virtual-investor`, then run:
+Install Harper at `~/.hermes/skills/finance/harper`, then run:
 
 ```bash
-cd ~/.hermes/skills/finance/virtual-investor
+cd ~/.hermes/skills/finance/harper
 python3 scripts/portfolio.py init
 python3 scripts/portfolio.py diagnostics config
 python3 scripts/portfolio.py diagnostics schedule
@@ -70,11 +70,9 @@ both succeed. A missing or failing provider preserves the portfolio but blocks
 research, BUY/ADD decisions, and automation until the user configures web
 access and the agent verifies it again.
 
-Install `entrypoints/harper` beside it at
-`~/.hermes/skills/finance/harper`. The public first-use path is `/harper`; its
-companion skill initializes the canonical engine idempotently and routes the
-conversation from `profile show`. It does not alter global personality or
-create scheduled jobs.
+The public first-use path is `/harper`. The skill initializes its engine
+idempotently and routes the conversation from `profile show`. It does not alter
+global personality or create scheduled jobs.
 
 Initialization creates the local ledger, but the user chooses its virtual
 starting cash during onboarding after confirming the reporting currency.

@@ -2,9 +2,10 @@ import json, os, subprocess, sys
 from pathlib import Path
 
 ROOT=Path(__file__).parents[1]
-PORT=ROOT/'scripts'/'portfolio.py'
-SWEEP=ROOT/'scripts'/'harper-intel.py'
-CLASSIFIER=ROOT/'scripts'/'harper-intel-classifier.py'
+SKILL_ROOT=ROOT/'skills'/'harper'
+PORT=SKILL_ROOT/'scripts'/'portfolio.py'
+SWEEP=SKILL_ROOT/'scripts'/'harper-intel.py'
+CLASSIFIER=SKILL_ROOT/'scripts'/'harper-intel-classifier.py'
 
 def run(cmd, env):
     r=subprocess.run(cmd,text=True,capture_output=True,env=env)

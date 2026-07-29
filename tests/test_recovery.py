@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "harper_recovery.py"
+SCRIPT = Path(__file__).parents[1] / "skills" / "harper" / "scripts" / "harper_recovery.py"
 SPEC = importlib.util.spec_from_file_location("harper_recovery", SCRIPT)
 recovery = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

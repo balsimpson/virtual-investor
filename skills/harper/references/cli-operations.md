@@ -31,6 +31,9 @@ python3 scripts/portfolio.py profile set --preferred-name "NAME"
 python3 scripts/portfolio.py profile set --market "MARKET" --base-currency ISO_CODE
 python3 scripts/portfolio.py profile set --initial-cash AMOUNT
 python3 scripts/portfolio.py profile set --user-timezone "AREA/CITY"
+hermes send --list --json
+python3 scripts/portfolio.py profile set --automation ENABLED
+python3 scripts/portfolio.py profile set --delivery-target "PLATFORM:DESTINATION"
 python3 scripts/portfolio.py market-adapter show "MARKET"
 python3 scripts/portfolio.py market-adapter schedule
 python3 scripts/portfolio.py market-session confirm DATE --status OPEN --source OFFICIAL_URL

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Virtual Investor"
-  short_description: "Run an adaptive, risk-gated virtual market portfolio"
-  default_prompt: "Use $virtual-investor to review my virtual portfolio and make an evidence-backed decision."
-
-policy:
-  allow_implicit_invocation: true

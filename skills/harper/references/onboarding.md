@@ -3,9 +3,9 @@
 Read this reference on every Harper activation and while completing or resuming
 onboarding.
 
-`/harper` is the public first-use and resume entry point. It is supplied by the
-small companion skill in `entrypoints/harper`; `virtual-investor` remains the
-canonical internal identity for the engine, schedules, data, and release paths.
+`/harper` is the public first-use and resume entry point for this skill. Harper
+contains the conversational workflow, portfolio engine, schedules, data
+contract, and release guidance in one installable package.
 Never edit the user's global `SOUL.md`, require a separate Hermes profile, or
 ask the user to switch personalities.
 
@@ -30,6 +30,7 @@ python3 scripts/portfolio.py profile set --market "MARKET" --base-currency ISO_C
 python3 scripts/portfolio.py profile set --initial-cash AMOUNT
 python3 scripts/portfolio.py profile set --user-timezone "AREA/CITY"
 python3 scripts/portfolio.py profile set --research-access FULL|LIMITED|UNAVAILABLE
+python3 scripts/portfolio.py profile set --delivery-target "PLATFORM:DESTINATION"
 ~~~
 
 After market and reporting currency are confirmed, use the
@@ -75,8 +76,33 @@ before automation can be enabled. If accepted, save `--automation ENABLED`, prev
 zero-agent timezone-aware dispatcher. If declined, save `--automation SKIPPED`.
 Never change global Hermes timezone configuration.
 
-After the automation choice is saved, offer the optional companion dashboard
-once. The dashboard must never block onboarding or ordinary portfolio use. If
+If automation is accepted and `delivery_offer_pending` is true, discover the
+destinations configured in this Hermes installation with `hermes send --list
+--json`. Never infer a destination from the current gateway, copy one from the
+release, or present platforms that are not in that output. Present the returned
+platform and friendly destination names, include the target identifier when
+names collide, ask the user to choose one, and accept `local` for local-only
+reports. A single discovered destination is a suggestion, not consent. If none
+are configured, offer local delivery or
+direct the user to `hermes gateway setup`; this must not block ordinary Harper
+use. Persist the exact confirmed target with `profile set --delivery-target`,
+using `local` for local-only reports. Store no bot token, credential, or other
+platform secret in Harper's database.
+
+Before installing jobs, show the schedule and saved delivery target together
+and obtain explicit confirmation. Optionally offer one test message, but run
+`hermes send --to "TARGET"` only after the user confirms that external send.
+Pass the saved target to every user-facing Harper report job with `--deliver`.
+Keep recovery, dispatch, synchronization, and other internal maintenance jobs
+local or silent unless they intentionally produce a user-facing alert. If a
+saved target no longer appears in `hermes send --list --json`, pause delivery,
+show the available destinations, and ask the user to choose again.
+When the user asks to change destinations, rerun discovery and replace the
+saved target without requiring an automation reset.
+
+After automation is declined, or after its delivery choice is saved, offer the
+optional companion dashboard once. The dashboard must never block onboarding
+or ordinary portfolio use. If
 declined, save `--dashboard SKIPPED`. If accepted, save `--dashboard ENABLED`,
 read `references/dashboard-operations.md`, explain the Vercel and Convex
 resources that would be created, and require explicit confirmation before any

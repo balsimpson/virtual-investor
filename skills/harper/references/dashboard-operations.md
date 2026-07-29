@@ -62,9 +62,15 @@ python3 scripts/portfolio.py dashboard
 
 ## First sync
 
-The companion dashboard must support dashboard contract version 1. The sync
-endpoint authenticates the bearer token and invokes an internal Convex mutation;
-there is no public replacement mutation.
+The companion dashboard must support dashboard contract version 2. The payload
+includes the user display time zone, reporting currency, market-adapter
+metadata, configured benchmark, cost mode, canonical valuation freshness, and
+cash/holdings components for each NAV snapshot. SQLite-calculated values remain
+authoritative; the dashboard must not reprice positions or substitute cost basis
+when a current valuation is unavailable.
+
+The sync endpoint authenticates the bearer token and invokes an internal Convex
+mutation; there is no public replacement mutation.
 
 Before the first sync, name the exact Convex production deployment and explain
 that the operation replaces the dashboard read model. Obtain explicit approval,

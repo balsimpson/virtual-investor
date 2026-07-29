@@ -19,7 +19,7 @@ screen count. A `NO_CANDIDATE` conclusion still requires the broad point-in-time
 screen to be persisted when reliable screening data was available.
 
 Workdir: the absolute path returned by
-`cd ~/.hermes/skills/finance/virtual-investor && pwd`
+`cd ~/.hermes/skills/finance/harper && pwd`
 Database: `~/.hermes/data/virtual-investor/portfolio.db`
 
 The job runs at 09:15 IST, when the normal NSE cash session opens. Opening prints
@@ -111,8 +111,8 @@ outcome.
 |---|---|
 | Name | `harper-morning-pulse` |
 | Schedule | `15 9 * * 1-5` (9:15 AM IST — market open, Mon-Fri) |
-| Skills | `virtual-investor` |
-| Workdir | Use the absolute path returned by `cd ~/.hermes/skills/finance/virtual-investor && pwd` |
+| Skills | `harper` |
+| Workdir | Use the absolute path returned by `cd ~/.hermes/skills/finance/harper && pwd` |
 | Toolsets | `terminal`, `web` |
-| Deliver | Choose an existing delivery target configured in this Hermes installation, or omit delivery for local-only reports |
+| Deliver | Use the confirmed `profile.delivery_target`; do not install this user-facing job while `delivery_offer_pending` is true |
 | Model | Use the Hermes default model unless the operator has configured another available model |

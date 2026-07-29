@@ -9,8 +9,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-PORTFOLIO = ROOT / "scripts" / "portfolio.py"
-DISPATCHER = ROOT / "scripts" / "market_schedule_dispatcher.py"
+PORTFOLIO = ROOT / "skills" / "harper" / "scripts" / "portfolio.py"
+DISPATCHER = ROOT / "skills" / "harper" / "scripts" / "market_schedule_dispatcher.py"
 SPEC = importlib.util.spec_from_file_location("market_schedule_dispatcher", DISPATCHER)
 dispatcher = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None

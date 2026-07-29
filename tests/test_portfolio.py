@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import sqlite3
 import subprocess
@@ -9,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).parents[1] / "scripts" / "portfolio.py"
+SCRIPT = Path(__file__).parents[1] / "skills" / "harper" / "scripts" / "portfolio.py"
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -210,6 +211,7 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     assert "₹250,000.00" in ready["suggested_response"]
     assert "no positions" in ready["suggested_response"]
     assert ready["automation_offer_pending"] is True
+    assert ready["delivery_offer_pending"] is False
     assert ready["dashboard_offer_pending"] is False
     assert "automatic schedule" in ready["suggested_response"]
     assert "won't create or enable jobs without your confirmation" in ready["suggested_response"]
@@ -220,9 +222,43 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     with sqlite3.connect(tmp_path / "portfolio.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM investor_profile").fetchone()[0] == 1
 
+    blocked_delivery = run_cli(
+        tmp_path,
+        "profile", "set", "--delivery-target", "telegram:-1001234567890",
+        check=False,
+    )
+    assert blocked_delivery.returncode == 1
+    assert "only after automated sessions are enabled" in blocked_delivery.stderr
+
+    delivery_offer = read_json(run_cli(
+        tmp_path, "profile", "set", "--automation", "ENABLED"
+    ))
+    assert delivery_offer["automation_offer_pending"] is False
+    assert delivery_offer["delivery_offer_pending"] is True
+    assert delivery_offer["dashboard_offer_pending"] is False
+    assert "destinations already configured in Hermes" in delivery_offer["suggested_response"]
+
     dashboard_offer = read_json(run_cli(
+        tmp_path,
+        "profile", "set", "--delivery-target", "telegram:-1001234567890",
+    ))
+    assert dashboard_offer["delivery_offer_pending"] is False
+    assert dashboard_offer["dashboard_offer_pending"] is True
+    assert dashboard_offer["profile"]["delivery_preference"] == "MESSAGING"
+    assert dashboard_offer["profile"]["delivery_target"] == "telegram:-1001234567890"
+    assert dashboard_offer["profile"]["delivery_confirmed_at"]
+    assert dashboard_offer["profile"]["onboarding_completed_at"] == (
+        ready["profile"]["onboarding_completed_at"]
+    )
+    assert "optional private web dashboard" in dashboard_offer["suggested_response"]
+
+    automation_skipped = read_json(run_cli(
         tmp_path, "profile", "set", "--automation", "SKIPPED"
     ))
+    assert automation_skipped["profile"]["delivery_preference"] == "NOT_ASKED"
+    assert automation_skipped["profile"]["delivery_target"] is None
+    assert automation_skipped["profile"]["delivery_confirmed_at"] is None
+    dashboard_offer = automation_skipped
     assert dashboard_offer["automation_offer_pending"] is False
     assert dashboard_offer["dashboard_offer_pending"] is True
     assert "optional private web dashboard" in dashboard_offer["suggested_response"]
@@ -249,8 +285,41 @@ def test_existing_india_portfolio_upgrade_seeds_scope_without_guessing_name(tmp_
     assert upgraded["profile"]["base_currency"] == "INR"
     assert upgraded["profile"]["initial_cash"] == 90000.0
     assert upgraded["profile"]["preferred_name"] is None
+    assert upgraded["profile"]["delivery_preference"] == "NOT_ASKED"
+    assert upgraded["profile"]["delivery_target"] is None
     assert upgraded["profile"]["dashboard_preference"] == "NOT_ASKED"
     assert upgraded["portfolio"]["cash"] == 73500.0
+
+
+def test_delivery_target_supports_local_and_rejects_invalid_values(tmp_path):
+    run_cli(tmp_path, "init")
+    run_cli(
+        tmp_path,
+        "profile", "set",
+        "--preferred-name", "Alex",
+        "--market", "India",
+        "--base-currency", "INR",
+        "--initial-cash", "100000",
+        "--user-timezone", "Asia/Kolkata",
+        "--research-access", "FULL",
+        "--automation", "ENABLED",
+    )
+
+    local = read_json(run_cli(
+        tmp_path, "profile", "set", "--delivery-target", "local"
+    ))
+    assert local["profile"]["delivery_preference"] == "LOCAL"
+    assert local["profile"]["delivery_target"] == "local"
+    assert local["delivery_offer_pending"] is False
+    assert local["dashboard_offer_pending"] is True
+
+    invalid = run_cli(
+        tmp_path,
+        "profile", "set", "--delivery-target", "Slack Investments",
+        check=False,
+    )
+    assert invalid.returncode == 1
+    assert "without whitespace" in invalid.stderr
 
 
 def test_dashboard_status_derives_site_endpoint_without_exposing_token(tmp_path):
@@ -263,12 +332,79 @@ def test_dashboard_status_derives_site_endpoint_without_exposing_token(tmp_path)
         },
     ))
     assert result["configured"] is True
-    assert result["contract_version"] == 1
+    assert result["contract_version"] == 2
     assert result["sync_url"] == (
         "https://private-install.eu-west-1.convex.site/harper-sync"
     )
     assert result["sync_token_configured"] is True
     assert "a" * 32 not in json.dumps(result)
+
+
+def test_dashboard_sync_v2_carries_global_profile_adapter_and_canonical_nav(
+    tmp_path, monkeypatch, capsys
+):
+    run_cli(tmp_path, "init")
+    run_cli(
+        tmp_path,
+        "profile",
+        "set",
+        "--preferred-name",
+        "Alex",
+        "--market",
+        "United States equities",
+        "--base-currency",
+        "USD",
+        "--initial-cash",
+        "25000",
+        "--user-timezone",
+        "Europe/London",
+    )
+
+    spec = importlib.util.spec_from_file_location("portfolio_sync_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    monkeypatch.setenv("VIRTUAL_INVESTOR_DB", str(tmp_path / "portfolio.db"))
+    monkeypatch.setenv("VIRTUAL_INVESTOR_ARCHIVE_DB", str(tmp_path / "archive.db"))
+    monkeypatch.setenv("CONVEX_URL", "https://private-install.eu-west-1.convex.cloud")
+    monkeypatch.setenv("HARPER_SYNC_TOKEN", "a" * 32)
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"synced":true,"contractVersion":2}'
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    module.cmd_convex_sync(None)
+    capsys.readouterr()
+
+    body = json.loads(captured["request"].data)
+    payload = body["payload"]
+    assert body["contractVersion"] == 2
+    assert payload["profile"] == {
+        "preferred_name": "Alex",
+        "user_timezone": "Europe/London",
+        "portfolio_currency": "USD",
+        "initial_capital": 25000.0,
+    }
+    assert payload["portfolio_config"]["market_id"] == "UNITED_STATES_EQUITIES"
+    assert payload["market_adapter"]["status"] == "DISCOVERY"
+    assert payload["valuation"]["portfolio_currency"] == "USD"
+    assert payload["nav_history"] == []
+    assert payload["sync_metadata"]["complete"] is True
+    assert captured["timeout"] == 30
 
 
 def test_profile_accepts_global_scope_and_validates_currency_timezone_and_names(tmp_path):
@@ -750,9 +886,9 @@ def test_usage_import_tracks_jobs_chat_subagents_models_tokens_and_cost(tmp_path
     jobs.write_text(json.dumps({
         "jobs": [{
             "id": "harperjob",
-            "name": "virtual-investor",
-            "skill": "virtual-investor",
-            "skills": ["virtual-investor"],
+            "name": "harper",
+            "skill": "harper",
+            "skills": ["harper"],
             "provider": "example-provider",
             "deliver": "local:portfolio",
         }],
@@ -783,8 +919,8 @@ def test_usage_import_tracks_jobs_chat_subagents_models_tokens_and_cost(tmp_path
             "SELECT session_id, job_name, cost_status FROM llm_usage ORDER BY session_id"
         ).fetchall()
     assert imported == [
-        ("child-session", "virtual-investor", "estimated"),
-        ("cron_harperjob_20260722_090000", "virtual-investor", "free"),
+        ("child-session", "harper", "estimated"),
+        ("cron_harperjob_20260722_090000", "harper", "free"),
         ("harper-chat", "Harper chat", "free"),
     ]
 
