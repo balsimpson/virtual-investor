@@ -195,6 +195,7 @@ def test_fresh_harper_onboarding_persists_and_resumes_one_question_at_a_time(tmp
     ))
     assert limited["stage"] == "NEEDS_RESEARCH_ACCESS"
     assert "hermes tools" in limited["suggested_response"]
+    assert "same provider or separate providers" in limited["suggested_response"]
     assert "Never paste an API key into chat" in limited["suggested_response"]
 
     ready = read_json(run_cli(

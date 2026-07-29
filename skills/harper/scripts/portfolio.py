@@ -2254,16 +2254,17 @@ def _profile_payload(conn: sqlite3.Connection) -> dict:
             suggested_response = (
                 "Web research is only partly available. Harper needs both search and "
                 "source extraction to verify evidence. Run `hermes tools`, open Web "
-                "Search & Extract, and configure one full provider such as Tavily or "
-                "Firecrawl. Never paste an API key into chat. Tell me when it is ready "
-                "and I'll verify it again."
+                "Search & Extract, and configure both capabilities using the same "
+                "provider or separate providers. Never paste an API key into chat. "
+                "Tell me when it is ready and I'll verify it again."
             )
         else:
             suggested_response = (
                 "Live web research is not configured, so I cannot responsibly research "
                 "or trade investments yet. Run `hermes tools`, open Web Search & Extract, "
-                "and configure one full provider such as Tavily or Firecrawl. Never paste "
-                "an API key into chat. Tell me when it is ready and I'll verify it."
+                "and configure both capabilities using the same provider or separate "
+                "providers. Never paste an API key into chat. Tell me when it is ready "
+                "and I'll verify it."
             )
     else:
         stage = "READY"

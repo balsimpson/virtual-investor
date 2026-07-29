@@ -67,8 +67,10 @@ To configure research access, run:
 hermes tools
 ```
 
-Choose **Web Search & Extract** and configure a provider that supports both
-capabilities. Harper verifies the callable tools before enabling research or
+Choose **Web Search & Extract** and configure working providers for both
+capabilities. One provider may handle both, or you may choose separate search
+and extraction providers—for example, Brave Search for search and Firecrawl
+for extraction. Harper verifies the callable tools before enabling research or
 automation; credentials should never be pasted into chat or committed here.
 
 ## First-run checks

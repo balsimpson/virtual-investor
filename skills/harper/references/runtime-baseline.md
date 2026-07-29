@@ -37,25 +37,40 @@ complete and automated sessions remain unavailable until both `web_search` and
 hermes tools
 ```
 
-Open **Web Search & Extract** and select one full provider. Tavily and
-Firecrawl each provide both search and extraction, so users do not need both.
-Nous Portal may provide managed Firecrawl without a separate API key. DDGS and
-SearXNG are search-only and therefore do not complete Harper onboarding unless
-they are paired with a working extraction provider.
+Open **Web Search & Extract** and select working providers for both
+capabilities. The choices are independent: use one provider that supports both,
+or pair any supported search provider with any supported extraction provider.
+For example, Firecrawl or Tavily can supply both capabilities, while Brave
+Search, DDGS, and SearXNG are search-only and must be paired with a working
+extraction provider. Nous Portal may provide managed Firecrawl without a
+separate API key. The available choices depend on the installed Hermes version.
 
-For a deliberate split configuration, keep credentials in `~/.hermes/.env`
-and select capabilities in `~/.hermes/config.yaml`:
+For an explicit configuration, keep credentials in `~/.hermes/.env` and select
+each capability in `~/.hermes/config.yaml`. The same provider may handle both:
 
 ```yaml
 web:
-  search_backend: tavily
+  search_backend: firecrawl
   extract_backend: firecrawl
 ```
 
+Or the providers may be split:
+
+```yaml
+web:
+  search_backend: brave-free
+  extract_backend: firecrawl
+```
+
+`web.search_backend` and `web.extract_backend` take precedence over the shared
+`web.backend` fallback. When changing providers, update or remove stale
+capability-specific overrides so Hermes does not continue routing a tool to the
+previous service.
+
 Never store provider credentials in the skill, Harper's SQLite ledger, a cron
 prompt, or chat. Determine readiness by exercising the actual tools rather
-than checking only for `TAVILY_API_KEY` or `FIRECRAWL_API_KEY`; Hermes may use a
-managed gateway, another supported provider, or a self-hosted backend.
+than checking for any particular provider's environment variable; Hermes may
+use a managed gateway, another supported provider, or a self-hosted backend.
 
 The onboarding agent must persist the observed result:
 

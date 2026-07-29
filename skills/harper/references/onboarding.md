@@ -52,11 +52,15 @@ names alone.
   `suggested_response`, and pause
 
 Never ask the user to paste an API key into chat. Direct them to run `hermes
-tools` and choose **Web Search & Extract**. One full provider is sufficient;
-Tavily and Firecrawl each support both capabilities. When the user says setup
-is complete, repeat the live check before persisting `FULL`. Do not claim
-Harper is ready, offer automation, research securities, or open/add a position
-until `profile show` returns `READY`.
+tools` and choose **Web Search & Extract**. The user may select any providers
+available in their Hermes installation: one provider may supply both
+capabilities, or a search-only provider such as Brave Search may be paired with
+a separate extraction provider. Do not override that choice or assume that
+`web.backend` controls a capability when `web.search_backend` or
+`web.extract_backend` is also set. When the user says setup is complete, repeat
+the live check before persisting `FULL`. Do not claim Harper is ready, offer
+automation, research securities, or open/add a position until `profile show`
+returns `READY`.
 
 Any non-empty market can begin with a `DISCOVERY` adapter. A missing benchmark,
 market-specific cost model, preferred quote source, or regulatory source does
