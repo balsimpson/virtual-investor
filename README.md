@@ -113,12 +113,32 @@ configured in Hermes, asks where updates should go, and also supports
 local-only reports. The release never bundles another operator's platform or
 destination settings.
 
-After automation is declined, or after its delivery destination is saved,
-Harper offers the separate
-[Harper Dashboard](https://github.com/balsimpson/harper-dashboard) once. The
-dashboard is optional, deploys into the user's own Vercel and Convex accounts,
-and is never bundled into the installed skill. Harper works fully from its
-local SQLite ledger when the dashboard is skipped.
+## Optional web dashboard
+
+Harper works entirely from its local SQLite ledger. For a private web view of
+the portfolio, deploy the separate Nuxt dashboard into your own Vercel and
+Convex accounts.
+
+[![Deploy Harper Dashboard with Vercel](https://vercel.com/button)](https://vercel.com/clone?repository-url=https%3A%2F%2Fgithub.com%2Fbalsimpson%2Fharper-dashboard&project-name=harper-dashboard&repository-name=harper-dashboard&env=CONVEX_DEPLOY_KEY&envDescription=Add%20a%20production-scoped%20Convex%20deploy%20key%20for%20this%20dashboard.&envLink=https%3A%2F%2Fdocs.convex.dev%2Fproduction%2Fhosting%2Fvercel)
+
+[View the dashboard repository](https://github.com/balsimpson/harper-dashboard)
+or follow its
+[deployment guide](https://github.com/balsimpson/harper-dashboard/blob/main/DEPLOYMENT.md).
+The button uses the manual Convex deploy-key path; the guide also covers the
+recommended Vercel Marketplace integration.
+
+The deployment creates a Nuxt site, a Convex backend, and a private sync
+endpoint. It does not upload portfolio data. After deploying, run this from the
+installed `harper` directory for a safe, credential-free setup checklist:
+
+```bash
+python3 scripts/portfolio.py dashboard --guide
+```
+
+Harper offers the dashboard once after the automation choice is complete. The
+dashboard is never bundled into the skill, never blocks normal use, and is not
+a backup of the authoritative SQLite ledger. The first sync requires separate,
+explicit approval of the exact production target.
 
 ## Safety model
 

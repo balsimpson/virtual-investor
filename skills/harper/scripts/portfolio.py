@@ -5720,7 +5720,7 @@ def cmd_intel_staging(args: argparse.Namespace) -> None:
             print(f"FLUSHED {count} staged articles")
 
 
-def cmd_dashboard(_: argparse.Namespace) -> None:
+def cmd_dashboard(args: argparse.Namespace) -> None:
     """Report the optional companion dashboard connection without exposing secrets."""
     convex_url = (
         os.environ.get("CONVEX_URL")
@@ -5729,11 +5729,12 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
     )
     sync_url = _dashboard_sync_endpoint(convex_url)
     token_present = len(os.environ.get("HARPER_SYNC_TOKEN", "").strip()) >= 32
-    print(json.dumps({
+    status = {
         "optional": True,
         "source_of_truth": str(db_path()),
         "contract_version": DASHBOARD_CONTRACT_VERSION,
         "companion_repository": "https://github.com/balsimpson/harper-dashboard",
+        "deployment_guide": "https://github.com/balsimpson/harper-dashboard/blob/main/DEPLOYMENT.md",
         "convex_url": convex_url,
         "sync_url": sync_url,
         "sync_token_configured": token_present,
@@ -5744,7 +5745,41 @@ def cmd_dashboard(_: argparse.Namespace) -> None:
             else "Deploy the optional companion dashboard and configure CONVEX_URL, "
                  "HARPER_SYNC_URL, and HARPER_SYNC_TOKEN outside chat."
         ),
-    }, indent=2))
+    }
+
+    if not args.guide:
+        print(json.dumps(status, indent=2))
+        return
+
+    def configured_label(value: object) -> str:
+        return "Configured" if value else "Not configured"
+
+    print("Harper Dashboard (optional)")
+    print(f"Source of truth: {status['source_of_truth']}")
+    print(f"Dashboard contract: version {DASHBOARD_CONTRACT_VERSION}")
+    print()
+    print("Connection checklist")
+    print(f"- Convex deployment: {convex_url or 'Not configured'}")
+    print(f"- Private sync endpoint: {sync_url or 'Not configured'}")
+    print(f"- Sync token: {configured_label(token_present)} (value hidden)")
+    print()
+
+    if status["configured"]:
+        print("The dashboard connection is ready for review.")
+        print("Next: confirm this production target and explicitly approve the first sync:")
+        print(f"  {convex_url}")
+        print("Then run: python3 scripts/portfolio.py convex-sync")
+        return
+
+    print("Next steps")
+    print("1. Deploy the dashboard into your own Vercel and Convex accounts:")
+    print(f"   {status['deployment_guide']}")
+    print("2. In the production Convex deployment, set a unique HARPER_SYNC_TOKEN")
+    print("   containing at least 32 characters.")
+    print("3. In the Hermes runtime environment, configure CONVEX_URL,")
+    print("   HARPER_SYNC_URL, and the same HARPER_SYNC_TOKEN.")
+    print("4. Run this command again, review the target, and explicitly approve")
+    print("   the first convex-sync before uploading portfolio data.")
 
 
 def _convex_evidence_source_scores(conn: sqlite3.Connection) -> list[dict]:
@@ -6512,6 +6547,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     dashboard = sub.add_parser(
         "dashboard", help="Inspect the optional companion dashboard connection"
+    )
+    dashboard.add_argument(
+        "--guide",
+        action="store_true",
+        help="Show a human-readable setup checklist instead of JSON",
     )
     dashboard.set_defaults(func=cmd_dashboard)
 

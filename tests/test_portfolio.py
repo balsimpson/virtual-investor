@@ -340,6 +340,32 @@ def test_dashboard_status_derives_site_endpoint_without_exposing_token(tmp_path)
     assert "a" * 32 not in json.dumps(result)
 
 
+def test_dashboard_guide_is_human_readable_without_exposing_token(tmp_path):
+    token = "private-dashboard-token" * 2
+    result = run_cli(
+        tmp_path,
+        "dashboard",
+        "--guide",
+        extra_env={
+            "CONVEX_URL": "https://private-install.eu-west-1.convex.cloud",
+            "HARPER_SYNC_TOKEN": token,
+        },
+    )
+    assert "Harper Dashboard (optional)" in result.stdout
+    assert "The dashboard connection is ready for review." in result.stdout
+    assert "https://private-install.eu-west-1.convex.cloud" in result.stdout
+    assert "python3 scripts/portfolio.py convex-sync" in result.stdout
+    assert token not in result.stdout
+
+
+def test_dashboard_guide_shows_setup_steps_when_not_configured(tmp_path):
+    result = run_cli(tmp_path, "dashboard", "--guide")
+    assert "Connection checklist" in result.stdout
+    assert "Sync token: Not configured" in result.stdout
+    assert "HARPER_SYNC_TOKEN" in result.stdout
+    assert "DEPLOYMENT.md" in result.stdout
+
+
 def test_dashboard_sync_v2_carries_global_profile_adapter_and_canonical_nav(
     tmp_path, monkeypatch, capsys
 ):

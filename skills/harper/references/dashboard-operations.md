@@ -54,11 +54,13 @@ status output.
 `CONVEX_DEPLOY_KEY` belongs in Vercel only. It must be scoped to the user's
 dashboard deployment and must never be copied into Hermes.
 
-Inspect configuration without exposing the token:
+Show the human-readable setup checklist without exposing the token:
 
 ```bash
-python3 scripts/portfolio.py dashboard
+python3 scripts/portfolio.py dashboard --guide
 ```
+
+For machine-readable connection status, omit `--guide` to receive JSON.
 
 ## First sync
 
